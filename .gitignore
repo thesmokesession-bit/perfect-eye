@@ -1,0 +1,8 @@
+src-upstream/
+radv/
+deps/
+build-ps5/
+dist/
+.deps/
+.home/
+docker/.dockercfg/

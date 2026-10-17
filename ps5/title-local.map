@@ -1,0 +1,5 @@
+/* A title exports nothing: the decomp and its libraries define names (sinf, bzero, ...)
+ * that system modules export too, and the title converter refuses an export. */
+{
+    local: *;
+};

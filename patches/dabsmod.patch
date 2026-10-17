@@ -1,0 +1,462 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 98b574212..ba90209ec 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -67,6 +67,9 @@ elseif(APPLE)
+ elseif(NINTENDO_SWITCH)
+   # Switch
+   set(TARGET_OS "nswitch")
++elseif(PS5)
++  # PS5 homebrew title (the PS5 port's cmake/ps5-toolchain.cmake sets PS5)
++  set(TARGET_OS "ps5")
+ elseif(UNIX)
+   # Generic *nix; assume Linux
+   set(TARGET_OS "linux")
+@@ -278,7 +281,13 @@ endif()
+ set(LIBS )
+ 
+ # SDL2
++if(PS5)
++  # PacBrew's static SDL2, linked by the PS5 port's link-title.sh
++  set(SDL2_LIBRARY "SDL2")
++  set(SDL2_INCLUDE_DIR "$ENV{PACBREW}/include/SDL2")
++else()
+ find_package(SDL2 REQUIRED)
++endif()
+ if(NINTENDO_SWITCH)
+   if(NOT SDL2_LIBRARY OR NOT SDL2_INCLUDE_DIR)
+     # sometimes FindSDL2 just wants us to suffer and does not set these
+@@ -290,7 +299,13 @@ include_directories(SYSTEM "${SDL2_INCLUDE_DIR}")
+ list(APPEND LIBS "${SDL2_LIBRARY}")
+ 
+ # ZLib
++if(PS5)
++  # zlib is already in the RADV archive the title links whole; the headers are PacBrew's
++  set(ZLIB_INCLUDE_DIR "$ENV{PACBREW}/include")
++  set(ZLIB_LIBRARY "")
++else()
+ find_package(ZLIB REQUIRED)
++endif()
+ 
+ # What Ghost Trials reaches the ghost server over. See the note at the top of
+ # port/src/ghostnet.c for why this is two different things.
+@@ -304,7 +319,14 @@ else()
+   # libcurl everywhere else, there being no system HTTP API to use instead.
+   # macOS carries it in the SDK; on Linux it is libcurl4-openssl-dev to build
+   # against and libcurl4, which every desktop already has, to run.
++  if(PS5)
++    # PacBrew's static libcurl and what its libcurl.pc lists after it
++    set(CURL_FOUND TRUE)
++    set(CURL_INCLUDE_DIRS "$ENV{PACBREW}/include")
++    set(CURL_LIBRARIES curl psl ssl crypto zstd)
++  else()
+   find_package(CURL QUIET)
++  endif()
+ 
+   if(CURL_FOUND)
+     message(STATUS "libcurl found - ghost server support enabled")
+@@ -325,7 +347,9 @@ endif()
+ if(ZLIB_INCLUDE_DIR)
+   include_directories(SYSTEM "${ZLIB_INCLUDE_DIR}")
+ endif()
+-list(APPEND LIBS "${ZLIB_LIBRARY}")
++if(ZLIB_LIBRARY)
++  list(APPEND LIBS "${ZLIB_LIBRARY}")
++endif()
+ 
+ # GL
+ if(NOT GL_LIBRARY)
+@@ -335,11 +359,16 @@ if(NOT GL_LIBRARY)
+     set(GL_LIBRARY EGL glapi drm_nouveau)
+   elseif(APPLE)
+     set(GL_LIBRARY "-framework OpenGL")
++  elseif(PS5)
++    # Vulkan only: the OpenGL renderer is built but never started (glad loads through SDL)
++    set(GL_LIBRARY "")
+   else()
+     set(GL_LIBRARY GL)
+   endif()
+ endif()
+-list(APPEND LIBS "${GL_LIBRARY}")
++if(GL_LIBRARY)
++  list(APPEND LIBS "${GL_LIBRARY}")
++endif()
+ 
+ # Vulkan: the second renderer (port/fast3d/gfx_vulkan.cpp, Video.Renderer).
+ # Nothing links against a Vulkan library - SDL finds the loader at run time,
+@@ -368,13 +397,16 @@ if(PD_VULKAN AND NOT NINTENDO_SWITCH)
+     endforeach()
+     # MSYS2's shaderc is built on winpthreads, which Windows links whole and
+     # static below, for everything
+-    if(NOT WIN32)
++    if(NOT WIN32 AND NOT PS5)
+       list(APPEND PD_VULKAN_LIBS pthread)
+     endif()
+   endif()
+ 
+   set(PD_VULKAN_OK FALSE)
+-  if(VULKAN_HEADERS_DIR AND SHADERC_INCLUDE_DIR AND SHADERC_LIBRARY)
++  if(PS5 AND VULKAN_HEADERS_DIR AND SHADERC_INCLUDE_DIR AND SHADERC_LIBRARY)
++    # A link test would run the title linker; the PS5 port's build links it for real
++    set(PD_VULKAN_OK TRUE)
++  elseif(VULKAN_HEADERS_DIR AND SHADERC_INCLUDE_DIR AND SHADERC_LIBRARY)
+     # That it all links, which a split or partial install may not
+     include(CheckCXXSourceCompiles)
+     set(CMAKE_REQUIRED_INCLUDES "${SHADERC_INCLUDE_DIR}")
+@@ -422,6 +454,9 @@ if(NOT EXTRA_LIBRARIES)
+         -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive,-Bdynamic)
+   elseif(NINTENDO_SWITCH)
+     set(EXTRA_LIBRARIES stdc++ pthread)
++  elseif(PS5)
++    # libc++, libm and threads come with the title link (the PS5 port's link-title.sh)
++    set(EXTRA_LIBRARIES pthread)
+   else()
+     set(EXTRA_LIBRARIES stdc++ m dl)
+   endif()
+diff --git a/port/external/enet.c b/port/external/enet.c
+index 69b2d8252..0dd5bad4d 100644
+--- a/port/external/enet.c
++++ b/port/external/enet.c
+@@ -12,9 +12,11 @@
+ 
+ #ifndef _WIN32
+ #ifndef _POSIX_C_SOURCE
++#ifndef __PROSPERO__ // the PS5's FreeBSD headers hide PF_INET6 and gettimeofday under it
+ #define _POSIX_C_SOURCE 200809L
+ #endif
+ #endif
++#endif
+ 
+ #define ENET_IMPLEMENTATION 1
+ #define ENET_NO_PRAGMA_LINK 1
+diff --git a/port/fast3d/gfx_vulkan.cpp b/port/fast3d/gfx_vulkan.cpp
+index 687f3fa7b..6a2dd99b2 100644
+--- a/port/fast3d/gfx_vulkan.cpp
++++ b/port/fast3d/gfx_vulkan.cpp
+@@ -60,6 +60,13 @@
+ #include <SDL_vulkan.h>
+ #include <shaderc/shaderc.h>
+ 
++#if defined(__PROSPERO__)
++// PS5: RADV is linked statically into the title, and its ICD entry point
++// stands in for the loader. The console has no windows: the swapchain presents
++// to the display plane through VK_KHR_display.
++extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vk_icdGetInstanceProcAddr(VkInstance instance, const char *name);
++#endif
++
+ #ifndef _LANGUAGE_C
+ #define _LANGUAGE_C
+ #endif
+@@ -4578,8 +4585,12 @@ static PFN_vkGetInstanceProcAddr vk_load_loader_headless(void) {
+ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
+     const bool headless = gfx_sdl_vulkan_headless() != 0;
+ 
++#if defined(__PROSPERO__)
++    vk_get_instance_proc = (PFN_vkGetInstanceProcAddr)vk_icdGetInstanceProcAddr;
++#else
+     vk_get_instance_proc = headless ? vk_load_loader_headless()
+                                     : (PFN_vkGetInstanceProcAddr)SDL_Vulkan_GetVkGetInstanceProcAddr();
++#endif
+     if (!vk_get_instance_proc) {
+         vk_fail("no Vulkan loader: %s", SDL_GetError());
+         return false;
+@@ -4595,13 +4606,24 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
+     if (vk_enumerate_instance_version) {
+         vk_enumerate_instance_version(&loader_version);
+     }
++#if defined(__PROSPERO__)
++    if (!vk_enumerate_instance_version) {
++        loader_version = VK_API_VERSION_1_3; // RADV is the only driver, and it is 1.4
++    }
++#endif
+     if (!vkCreateInstance || loader_version < VK_API_VERSION_1_1) {
+         vk_fail("the Vulkan loader is older than 1.1");
+         return false;
+     }
+ 
+     std::vector<const char *> exts;
++#if defined(__PROSPERO__)
++    exts.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
++    exts.push_back(VK_KHR_DISPLAY_EXTENSION_NAME);
++    if (false) {
++#else
+     if (headless) {
++#endif
+         uint32_t count = 0;
+         vkEnumerateInstanceExtensionProperties(NULL, &count, NULL);
+         std::vector<VkExtensionProperties> avail(count);
+@@ -4688,7 +4710,66 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
+         }
+     }
+ 
++#if defined(__PROSPERO__)
++    {
++        // The display's first mode is the output the system set (3840x2160 on
++        // a 4K set); a display plane surface has to use the mode's own extent.
++        // The window - an SDL offscreen window - takes the same size, so the
++        // game draws at the display's resolution and the present is 1:1.
++        PFN_vkEnumeratePhysicalDevices enum_devs =
++            (PFN_vkEnumeratePhysicalDevices)vk_get_instance_proc(vk_instance, "vkEnumeratePhysicalDevices");
++        PFN_vkGetPhysicalDeviceDisplayPropertiesKHR get_displays =
++            (PFN_vkGetPhysicalDeviceDisplayPropertiesKHR)vk_get_instance_proc(vk_instance, "vkGetPhysicalDeviceDisplayPropertiesKHR");
++        PFN_vkGetDisplayModePropertiesKHR get_modes =
++            (PFN_vkGetDisplayModePropertiesKHR)vk_get_instance_proc(vk_instance, "vkGetDisplayModePropertiesKHR");
++        PFN_vkCreateDisplayPlaneSurfaceKHR create_plane =
++            (PFN_vkCreateDisplayPlaneSurfaceKHR)vk_get_instance_proc(vk_instance, "vkCreateDisplayPlaneSurfaceKHR");
++        if (!enum_devs || !get_displays || !get_modes || !create_plane) {
++            vk_fail("VK_KHR_display entry points are missing");
++            return false;
++        }
++        uint32_t ndev = 1;
++        VkPhysicalDevice dev = VK_NULL_HANDLE;
++        VkResult dr = enum_devs(vk_instance, &ndev, &dev);
++        if ((dr != VK_SUCCESS && dr != VK_INCOMPLETE) || !ndev) {
++            vk_fail("no Vulkan device for the display (%d)", (int)dr);
++            return false;
++        }
++        VkDisplayPropertiesKHR disp = {};
++        uint32_t ndisp = 1;
++        dr = get_displays(dev, &ndisp, &disp);
++        if ((dr != VK_SUCCESS && dr != VK_INCOMPLETE) || !ndisp) {
++            vk_fail("no display (%d)", (int)dr);
++            return false;
++        }
++        uint32_t nmodes = 0;
++        get_modes(dev, disp.display, &nmodes, NULL);
++        std::vector<VkDisplayModePropertiesKHR> modes(nmodes);
++        dr = get_modes(dev, disp.display, &nmodes, modes.data());
++        if (dr != VK_SUCCESS || !nmodes) {
++            vk_fail("the display has no modes (%d)", (int)dr);
++            return false;
++        }
++        const VkExtent2D ext = modes[0].parameters.visibleRegion;
++        VkDisplaySurfaceCreateInfoKHR di = { VK_STRUCTURE_TYPE_DISPLAY_SURFACE_CREATE_INFO_KHR };
++        di.displayMode = modes[0].displayMode;
++        di.transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
++        di.alphaMode = VK_DISPLAY_PLANE_ALPHA_OPAQUE_BIT_KHR;
++        di.imageExtent = ext;
++        dr = create_plane(vk_instance, &di, NULL, &vk_surface);
++        if (dr != VK_SUCCESS) {
++            vk_fail("could not create the display plane surface (%d)", (int)dr);
++            vk_surface = VK_NULL_HANDLE;
++            return false;
++        }
++        SDL_SetWindowSize(wnd, (int)ext.width, (int)ext.height);
++        sysLogPrintf(LOG_NOTE, "Vulkan: display plane %ux%u at %u mHz (%s)", ext.width, ext.height,
++                     modes[0].parameters.refreshRate, disp.displayName ? disp.displayName : "display");
++    }
++    if (false) {
++#else
+     if (headless) {
++#endif
+         // The swapchain takes the window's size (currentExtent is undefined
+         // on a headless surface) and is read back like any other
+         PFN_vkCreateHeadlessSurfaceEXT create_headless =
+diff --git a/port/src/ghostnet.c b/port/src/ghostnet.c
+index ecfb59a65..53a2a6281 100644
+--- a/port/src/ghostnet.c
++++ b/port/src/ghostnet.c
+@@ -794,6 +794,10 @@ bool ghostnetSend(const struct ghostnetreq *req, struct ghostnetbuf *buf,
+ 	}
+ 
+ 	curl_easy_setopt(curl, CURLOPT_URL, req->url);
++#ifdef PLATFORM_PS5
++	// No system CA store on the console: the title ships Mozilla's bundle
++	curl_easy_setopt(curl, CURLOPT_CAINFO, "/app0/cacert.pem");
++#endif
+ 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, ghostnetCurlWrite);
+ 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, buf);
+ 	curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)(req->timeout > 0 ? req->timeout : GHOSTNET_TIMEOUT));
+diff --git a/port/src/main.c b/port/src/main.c
+index 52d3fdc46..f51504248 100644
+--- a/port/src/main.c
++++ b/port/src/main.c
+@@ -4,6 +4,7 @@
+ #include <PR/ultrasched.h>
+ #include <PR/os_message.h>
+ 
++#include "platform.h"
+ #include "lib/main.h"
+ #include "game/modoptions.h"
+ #include "game/modrandom.h"
+@@ -214,8 +215,18 @@ static void mainApplySettingsRevision(void)
+ 	g_SettingsRevision = SETTINGS_REVISION;
+ }
+ 
++#ifdef PLATFORM_PS5
++// ps5/ps5_platform.c in the PS5 port: the log, the crash handler, SDL's
++// offscreen video driver, the splash screen, and the arguments a title has
++// no command line to pass (--portable, --vulkan)
++void ps5PlatformInit(int *argc, const char ***argv);
++#endif
++
+ int main(int argc, const char **argv)
+ {
++#ifdef PLATFORM_PS5
++	ps5PlatformInit(&argc, &argv);
++#endif
+ 	sysInitArgs(argc, argv);
+ 
+ 	if (!sysArgCheck("--no-crash-handler")) {
+diff --git a/port/src/net/nettransport.c b/port/src/net/nettransport.c
+index 3842267e4..79d52900f 100644
+--- a/port/src/net/nettransport.c
++++ b/port/src/net/nettransport.c
+@@ -6,9 +6,11 @@
+ 
+ #ifndef _WIN32
+ #ifndef _POSIX_C_SOURCE
++#ifndef __PROSPERO__ // the PS5's FreeBSD headers hide PF_INET6 and gettimeofday under it
+ #define _POSIX_C_SOURCE 200809L // getaddrinfo and friends under -std=c11, as enet.c
+ #endif
+ #endif
++#endif
+ 
+ #include <stdlib.h>
+ #include <stdio.h>
+diff --git a/port/src/record.c b/port/src/record.c
+index b5b178af9..19caf8616 100644
+--- a/port/src/record.c
++++ b/port/src/record.c
+@@ -1922,6 +1922,13 @@ void recordToggle(void)
+ 		return;
+ 	}
+ 
++#ifdef PLATFORM_PS5
++	// No ffmpeg and no processes to run one in: the console's own Create
++	// button records instead
++	sysLogPrintf(LOG_NOTE, "record: not available on the PS5 - use the controller's Create button");
++	return;
++#endif
++
+ 	// A key press is not a reason to go and fetch an encoder. The row in Dab's
+ 	// Mod Options is where that is asked for, and until it has been the key
+ 	// does nothing rather than failing loudly once a frame.
+diff --git a/port/src/system.c b/port/src/system.c
+index fffbe04b9..66a6bc5c9 100644
+--- a/port/src/system.c
++++ b/port/src/system.c
+@@ -381,6 +381,12 @@ s32 sysRestartRequested(void)
+ 
+ void sysGetExecutablePath(char *outPath, const u32 outLen)
+ {
++#ifdef PLATFORM_PS5
++	// A PS5 title's folder is mounted at /app0, and it is writable: the game,
++	// its data/, saves and packs all live there (the port runs --portable)
++	snprintf(outPath, outLen, "/app0");
++	return;
++#endif
+ 	// try asking SDL
+ 	char *sdlPath = SDL_GetBasePath();
+ 
+@@ -415,6 +421,10 @@ void sysGetExecutablePath(char *outPath, const u32 outLen)
+ 
+ void sysGetHomePath(char *outPath, const u32 outLen)
+ {
++#ifdef PLATFORM_PS5
++	snprintf(outPath, outLen, "/app0");
++	return;
++#endif
+ 	// try asking SDL
+ 	char *sdlPath = SDL_GetPrefPath("", "perfectdark");
+ 
+@@ -489,6 +499,14 @@ s32 sysMemReadableRange(const void *ptr, uintptr_t *lo, uintptr_t *hi)
+ 	*lo = (uintptr_t)mbi.BaseAddress;
+ 	*hi = (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
+ 
++	return 1;
++#elif defined(PLATFORM_PS5)
++	// No mincore() for a title: say the page is there. The renderer's check is
++	// a guard against a pointer to freed memory, which glibc and Windows are
++	// what showed up; the PS5's heap (the platform layer's) does not hand
++	// pages back.
++	*lo = (uintptr_t)ptr & ~(uintptr_t)4095;
++	*hi = *lo + 4096;
+ 	return 1;
+ #else
+ 	static uintptr_t pagesize;
+diff --git a/port/src/texpack.c b/port/src/texpack.c
+index 0d3cce18c..501d1864f 100644
+--- a/port/src/texpack.c
++++ b/port/src/texpack.c
+@@ -2981,6 +2981,20 @@ static void texpackScan(void)
+ 		texpackScanDir(fsGetModDirAt(i));
+ 	}
+ 
++#ifdef PLATFORM_PS5
++	// The PS5 title ships with its texture pack installed and no pd.ini: the
++	// first pack in texture-packs/ is used until the player picks another (or
++	// turns Use Texture Packs off, which is what keeps it off)
++	if (!packName[0]) {
++		texpackRefreshPacks();
++		if (numPacks > 0) {
++			strncpy(packName, packs[0].name, sizeof(packName) - 1);
++			packName[sizeof(packName) - 1] = '\0';
++			sysLogPrintf(LOG_NOTE, "texpack: PS5: using %s", packName);
++		}
++	}
++#endif
++
+ 	{
+ 		// Last, so the pack the player chose in the menu wins over any
+ 		// textures/ a mod happens to ship. One scan covers both layouts -
+diff --git a/port/src/update.c b/port/src/update.c
+index b32b6b917..8fc77edcc 100644
+--- a/port/src/update.c
++++ b/port/src/update.c
+@@ -1203,7 +1203,7 @@ void updateInstall(void)
+ 
+ bool updateIsAvailable(void)
+ {
+-#ifdef PD_GHOST_NET
++#if defined(PD_GHOST_NET) && !defined(PLATFORM_PS5) // a PS5 title is replaced by FTP, not by the updater
+ 	return true;
+ #else
+ 	return false;
+diff --git a/port/src/video.c b/port/src/video.c
+index 1481b7a61..a8c88ac5c 100644
+--- a/port/src/video.c
++++ b/port/src/video.c
+@@ -276,6 +276,16 @@ s32 videoInit(void)
+ 	}
+ 	videoSetFsrSharpness(vidFsrSharpness);
+ 
++#ifdef PLATFORM_PS5
++	// The console's window is an SDL offscreen window that the Vulkan renderer
++	// resizes to the display mode once it has the display (gfx_vulkan.cpp,
++	// __PROSPERO__); a fullscreen offscreen window would stay at SDL's own size
++	vidFullscreen = 0;
++	vidMaximize = 0;
++	vidWidth = 1920;
++	vidHeight = 1080;
++#endif
++
+ 	struct GfxInitSettings set = {
+ 		.wapi = wmAPI,
+ 		.rapi = renderingAPI,
+@@ -297,6 +307,10 @@ s32 videoInit(void)
+ 
+ #ifdef PD_HAVE_VULKAN
+ 	if (renderingAPI == &gfx_vulkan_api && gfx_vulkan_failed()) {
++#ifdef PLATFORM_PS5
++		// No OpenGL to fall back to on the console; the log says what failed
++		sysFatalError("Vulkan could not start. See pd.log in the title folder.");
++#endif
+ 		// The window goes and comes back for OpenGL; the setting is left as it
+ 		// is, so a driver installed later is picked up without visiting the menu
+ 		sysLogPrintf(LOG_WARNING, "VIDEO: Vulkan could not start, using OpenGL");
+diff --git a/src/include/platform.h b/src/include/platform.h
+index 79a1864e8..ffa387037 100644
+--- a/src/include/platform.h
++++ b/src/include/platform.h
+@@ -4,6 +4,10 @@
+ // detect OS
+ #if defined(_WIN32)
+ 	#define PLATFORM_WIN32 1
++#elif defined(__PROSPERO__)
++	// PS5 homebrew title (a FreeBSD-derived system; see ps5/ in the PS5 port)
++	#define PLATFORM_POSIX 1
++	#define PLATFORM_PS5 1
+ #elif defined(__SWITCH__)
+ 	#define PLATFORM_POSIX 1
+ 	#define PLATFORM_NSWITCH 1
