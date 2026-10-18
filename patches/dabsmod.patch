@@ -1354,29 +1354,68 @@ index fafdd8e28..156fb91b0 100644
 +
  #endif
 diff --git a/port/src/gexfront.c b/port/src/gexfront.c
-index f68bccb8f..9c5bd8658 100644
+index f68bccb8f..5a499eefb 100644
 --- a/port/src/gexfront.c
 +++ b/port/src/gexfront.c
-@@ -3914,6 +3914,19 @@ static void frontTickScreen(void)
+@@ -258,6 +258,10 @@ enum { SCREEN_MODE, SCREEN_MPOPTIONS, SCREEN_LEVEL, SCREEN_SCENARIO, SCREEN_HEAL
+ 	SCREEN_MISSION, SCREEN_DIFFICULTY, SCREEN_007OPTIONS, SCREEN_BRIEFING, SCREEN_CINEMA, SCREEN_CINEMAPICK,
+ 	SCREEN_EXTRA, SCREEN_MONITORS, SCREEN_MONITORVIEW, SCREEN_REPORT, SCREEN_STATS };
+ 
++#if defined(PLATFORM_PS5) || defined(PD_TILE_TEST)
++extern s32 g_Ps5GoldenEyeTile; // main.c: the GoldenEye tile (PPSA64008)
++#endif
++
+ /**
+  * GoldenEye's mission folder (front.c's mission_folder_setup_entries): its nine
+  * chapter headings and, under each, its missions, in the order the folder gives
+@@ -3914,6 +3918,23 @@ static void frontTickScreen(void)
  			g_Front.highlight = g_Front.cursory >= 275.0f ? 2 : g_Front.cursory >= 243.0f ? 1 : 0;
  		}
  
-+#ifdef PLATFORM_PS5
-+		{
-+			// the GoldenEye tile: its own top page is the top; there is no Perfect Dark under it
-+			extern s32 g_Ps5GoldenEyeTile;
++#if defined(PLATFORM_PS5) || defined(PD_TILE_TEST)
++		// the GoldenEye tile: its own top page is the top, there is no Perfect Dark under it,
++		// and the tab is ONLINE: the lobby, in GoldenEye's mode; the folder comes back when
++		// the lobby's pages close (mainmenu.c)
++		if (g_Ps5GoldenEyeTile) {
++			back = 0;
 +
-+			if (g_Ps5GoldenEyeTile) {
-+				back = 0;
-+				if (g_Front.tabprev) {
-+					pick = 0;
-+				}
++			if (pick && g_Front.tabprev) {
++				extern void netLobbyMenuOpenGoldenEye(void);
++
++				frontSfx(GESFX_DOOR_METAL_CLOSE, MENUSOUND_SELECT);
++				frontClose();
++				netLobbyMenuOpenGoldenEye();
++				return;
 +			}
 +		}
 +#endif
  		if (back || (pick && g_Front.tabprev)) {
  			frontSfx(GESFX_DOOR_METAL_CLOSE2, MENUSOUND_TOGGLEOFF);
  			frontClose();
+@@ -5580,9 +5601,23 @@ void gexFrontTextWrap(s32 gothic, const char *text, char *out, size_t len, s32 w
+ }
+ 
+ /** frontAddStartTabText() and frontAddPreviousTabText(): Bank Gothic, turned, a tab's middle. */
++#if defined(PLATFORM_PS5) || defined(PD_TILE_TEST)
++// The GoldenEye tile's mode select: PREVIOUS has nothing to go back to there, so the tab is
++// ONLINE, the lobby set to GoldenEye (netLobbyMenuOpenGoldenEye())
++static s32 frontPrevIsOnline(void)
++{
++	return g_Ps5GoldenEyeTile && g_Front.screen == SCREEN_MODE;
++}
++#endif
++
+ static Gfx *frontTab(Gfx *gdl, s32 textstr, s32 top, s32 bottom, s32 highlight)
+ {
+ 	const char *text = frontString(textstr);
++#if defined(PLATFORM_PS5) || defined(PD_TILE_TEST)
++	if (textstr == TITLE_PREVIOUS && frontPrevIsOnline()) {
++		text = langTr("ONLINE\n");
++	}
++#endif
+ 	s32 width;
+ 	s32 height;
+ 	s32 v;
 diff --git a/port/src/gexplusrom.c b/port/src/gexplusrom.c
 index 1907f81fe..ebb17da0d 100644
 --- a/port/src/gexplusrom.c
@@ -2502,7 +2541,7 @@ index 88588d034..d3b8aba2d 100644
  		return gdl;
  	}
 diff --git a/port/src/main.c b/port/src/main.c
-index 52d3fdc46..d633feeff 100644
+index 52d3fdc46..68db03f62 100644
 --- a/port/src/main.c
 +++ b/port/src/main.c
 @@ -4,6 +4,7 @@
@@ -2513,10 +2552,14 @@ index 52d3fdc46..d633feeff 100644
  #include "lib/main.h"
  #include "game/modoptions.h"
  #include "game/modrandom.h"
-@@ -214,8 +215,23 @@ static void mainApplySettingsRevision(void)
+@@ -214,8 +215,27 @@ static void mainApplySettingsRevision(void)
  	g_SettingsRevision = SETTINGS_REVISION;
  }
  
++#if !defined(PLATFORM_PS5) && defined(PD_TILE_TEST)
++s32 g_Ps5BootGoldenEye = 0;
++s32 g_Ps5GoldenEyeTile = 0;
++#endif
 +#ifdef PLATFORM_PS5
 +// the GoldenEye tile: open GoldenEye on the Perfect Menu's first tick (mainmenu.c)
 +s32 g_Ps5BootGoldenEye = 0; // s32, not bool: the game's bool is an s32 (types.h) and the port's a byte
@@ -2537,22 +2580,22 @@ index 52d3fdc46..d633feeff 100644
  	sysInitArgs(argc, argv);
  
  	if (!sysArgCheck("--no-crash-handler")) {
-@@ -371,6 +387,10 @@ int main(int argc, const char **argv)
+@@ -371,6 +391,10 @@ int main(int argc, const char **argv)
  		g_FixedStep = fps < 30 ? 30 : fps > 240 ? 240 : fps;
  	}
  	g_ExitFrame = sysArgGetInt("--exit-frame", 0);
-+#ifdef PLATFORM_PS5
++#if defined(PLATFORM_PS5) || defined(PD_TILE_TEST) // PD_TILE_TEST: the GoldenEye tile on a desktop build, to test it
 +	g_Ps5BootGoldenEye = sysArgCheck("--ps5-goldeneye");
 +	g_Ps5GoldenEyeTile = g_Ps5BootGoldenEye;
 +#endif
  	g_StateHashEvery = sysArgGetInt("--state-hash", 0);
  	g_ShotFrame = sysArgGetInt("--screenshot-frame", 0);
  	g_AlarmAtFrame = sysArgGetInt("--alarm-at", 0);
-@@ -437,6 +457,12 @@ int main(int argc, const char **argv)
+@@ -437,6 +461,12 @@ int main(int argc, const char **argv)
  		}
  	}
  
-+#ifdef PLATFORM_PS5
++#if defined(PLATFORM_PS5) || defined(PD_TILE_TEST) // PD_TILE_TEST: the GoldenEye tile on a desktop build, to test it
 +	// the GoldenEye tile skips Perfect Dark's own opening: GoldenEye's plays instead
 +	if (g_StageNum == STAGE_TITLE && g_Ps5GoldenEyeTile) {
 +		g_StageNum = STAGE_CITRAINING;
@@ -3077,7 +3120,7 @@ index 3842267e4..79d52900f 100644
  #include <stdlib.h>
  #include <stdio.h>
 diff --git a/port/src/netlobbymenu.c b/port/src/netlobbymenu.c
-index c927e5ead..69ae77145 100644
+index c927e5ead..fb6962111 100644
 --- a/port/src/netlobbymenu.c
 +++ b/port/src/netlobbymenu.c
 @@ -2,6 +2,7 @@
@@ -3097,7 +3140,39 @@ index c927e5ead..69ae77145 100644
  static s32 s_WaitingForRoom = 0; // a join or create is in flight from these pages
  static char s_Status[320];
  static char s_BriefingNote[160]; // why the focused room cannot be joined
-@@ -1650,7 +1653,7 @@ static MenuItemHandlerResult handlerRoomList(s32 operation, struct menuitem *ite
+@@ -1590,6 +1593,31 @@ MenuItemHandlerResult netLobbyMenuHandlerOnlineMain(s32 operation, struct menuit
+ 	return 0;
+ }
+ 
++#if defined(PLATFORM_PS5) || defined(PD_TILE_TEST)
++/**
++ * The GoldenEye tile's ONLINE tab (gexfront.c): the same pages as the Perfect Menu's row, with
++ * the rooms made there in GoldenEye's mode, as the GoldenEye Combat Simulator's own Online Game
++ * row makes them
++ */
++void netLobbyMenuOpenGoldenEye(void)
++{
++	if (netLobbyInRoom()) {
++		netLobbyMenuPushRoom();
++		return;
++	}
++
++	g_GexPlusVariant = NULL;
++	mpSetGexPlusMode(true);
++	g_Vars.bondplayernum = 0;
++	g_Vars.coopplayernum = -1;
++	g_Vars.antiplayernum = -1;
++	challengeDetermineUnlockedFeatures();
++	g_Vars.mpsetupmenu = MPSETUPMENU_GENERAL;
++	func0f0f820c(&g_NetOnlineMenuDialog, MENUROOT_MPSETUP);
++	func0f0f8300();
++}
++#endif
++
+ /*
+  * Briefing Room
+  */
+@@ -1650,7 +1678,7 @@ static MenuItemHandlerResult handlerRoomList(s32 operation, struct menuitem *ite
  
  	switch (operation) {
  	case MENUOP_GETOPTIONCOUNT:
@@ -3106,7 +3181,7 @@ index c927e5ead..69ae77145 100644
  		break;
  	case MENUOP_GETOPTIONTEXT:
  		return (intptr_t)"";
-@@ -1683,6 +1686,13 @@ static MenuItemHandlerResult handlerRoomList(s32 operation, struct menuitem *ite
+@@ -1683,6 +1711,13 @@ static MenuItemHandlerResult handlerRoomList(s32 operation, struct menuitem *ite
  			break;
  		}
  
@@ -3120,7 +3195,7 @@ index c927e5ead..69ae77145 100644
  		if (index > n) {
  			s_BriefingNote[0] = '\0';
  			netLobbyClearMessage();
-@@ -1732,7 +1742,7 @@ static MenuItemHandlerResult handlerRoomList(s32 operation, struct menuitem *ite
+@@ -1732,7 +1767,7 @@ static MenuItemHandlerResult handlerRoomList(s32 operation, struct menuitem *ite
  
  			if (index >= n) {
  				// Create Room, Refresh: the reference's Create Game card
@@ -3129,7 +3204,7 @@ index c927e5ead..69ae77145 100644
  				const s32 font = index == n ? LOBBYFONT_MD : LOBBYFONT_SM;
  
  				w = lobbyTextWidth(label, font);
-@@ -2029,6 +2039,12 @@ static const char *briefingCardText(struct menudialog *dialog, const char **titl
+@@ -2029,6 +2064,12 @@ static const char *briefingCardText(struct menudialog *dialog, const char **titl
  	}
  
  	if (index == n + 1) {
@@ -3142,7 +3217,7 @@ index c927e5ead..69ae77145 100644
  		*title = "Refresh List";
  
  		return "Ask the lobby for the rooms again. The list also refreshes itself every 10 seconds.";
-@@ -2120,7 +2136,13 @@ static Gfx *lobbyBriefingRoomWindow(Gfx *gdl, struct menudialog *dialog, s32 x1,
+@@ -2120,7 +2161,13 @@ static Gfx *lobbyBriefingRoomWindow(Gfx *gdl, struct menudialog *dialog, s32 x1,
  		return lobbyParagraph(gdl, text, tx, &y, inner, normal, (y2 - 2 - y) / LOBBY_XSROW);
  	}
  
@@ -3157,7 +3232,7 @@ index c927e5ead..69ae77145 100644
  
  	if (r->compat != NETLOBBY_COMPAT_OK) {
  		gdl = lobbyParagraph(gdl, netLobbyCompatText(r->compat), tx, &y, inner, lobbyAlpha(0xffff6000, alpha), 3);
-@@ -2233,6 +2255,70 @@ struct menudialogdef g_NetJoinPasswordMenuDialog = {
+@@ -2233,6 +2280,70 @@ struct menudialogdef g_NetJoinPasswordMenuDialog = {
  	NULL,
  };
  
@@ -3228,7 +3303,7 @@ index c927e5ead..69ae77145 100644
  /*
   * Create Room
   */
-@@ -4797,7 +4883,9 @@ static Gfx *lobbyPreviewWindow(Gfx *gdl, struct menudialog *dialog, s32 x1, s32
+@@ -4797,7 +4908,9 @@ static Gfx *lobbyPreviewWindow(Gfx *gdl, struct menudialog *dialog, s32 x1, s32
  	snprintf(preview.sum.host, sizeof(preview.sum.host), "%s", netLobbyAccount());
  
  	if (settings && room->valid) {
@@ -3973,7 +4048,7 @@ index 41fc439cd..e528c23f9 100644
  		allowmcross = (PLAYER_EXTCFG().mouseaimmode == MOUSEAIM_CLASSIC) && !aimlock &&
  			(movedata.freelookdx || movedata.freelookdy || g_Vars.currentplayer->swivelpos[0] || g_Vars.currentplayer->swivelpos[1]);
 diff --git a/src/game/filemgr.c b/src/game/filemgr.c
-index aef9f054e..d07fc9eba 100644
+index aef9f054e..a761fed84 100644
 --- a/src/game/filemgr.c
 +++ b/src/game/filemgr.c
 @@ -2803,6 +2803,51 @@ MenuDialogHandlerResult filemgrMainMenuDialog(s32 operation, struct menudialogde
@@ -3981,7 +4056,7 @@ index aef9f054e..d07fc9eba 100644
  		filelistsTick();
  		break;
 +#endif
-+#ifdef PLATFORM_PS5
++#if defined(PLATFORM_PS5) || defined(PD_TILE_TEST)
 +	case MENUOP_TICK:
 +		{
 +			// The GoldenEye tile shows none of Perfect Dark's own pages: the save file is
@@ -3989,8 +4064,8 @@ index aef9f054e..d07fc9eba 100644
 +			extern s32 g_Ps5GoldenEyeTile;
 +			static bool picked;
 +
++			// (numdevices counts controller paks: the game pak is always there and it is 0)
 +			if (g_Ps5GoldenEyeTile && !picked && g_FileLists[0] && g_FileLists[0]->timeuntilupdate == 0
-+					&& g_FileLists[0]->numdevices > 0
 +					&& g_Menus[g_MpPlayerNum].curdialog && g_Menus[g_MpPlayerNum].curdialog->definition == dialogdef) {
 +				picked = true;
 +
@@ -4029,14 +4104,14 @@ index aef9f054e..d07fc9eba 100644
  	}
  
 diff --git a/src/game/mainmenu.c b/src/game/mainmenu.c
-index ea7811d68..61d9ee9ed 100644
+index ea7811d68..4b1debb51 100644
 --- a/src/game/mainmenu.c
 +++ b/src/game/mainmenu.c
 @@ -5203,12 +5203,20 @@ struct menudialogdef g_GexPlusMenuDialog = {
   * (port/src/gexfront.c), or this dialog when there is nothing converted to draw
   * them with - it says why.
   */
-+#ifdef PLATFORM_PS5
++#if defined(PLATFORM_PS5) || defined(PD_TILE_TEST) // PD_TILE_TEST: the GoldenEye tile on a desktop build, to test it
 +// GoldenEye has a tile of its own on the PS5: the Perfect Dark tile's menu leaves it out
 +extern s32 g_Ps5GoldenEyeTile; // main.c
 +#define PS5_PD_TILE (!g_Ps5GoldenEyeTile)
@@ -4063,12 +4138,14 @@ index ea7811d68..61d9ee9ed 100644
  	}
  
  	if (operation == MENUOP_CHECKDISABLED) {
-@@ -5341,6 +5349,12 @@ MenuItemHandlerResult menuhandlerMainMenuCounterOperative(s32 operation, struct
+@@ -5341,6 +5349,14 @@ MenuItemHandlerResult menuhandlerMainMenuCounterOperative(s32 operation, struct
  	return 0;
  }
  
-+#ifdef PLATFORM_PS5
++#if defined(PLATFORM_PS5) || defined(PD_TILE_TEST)
 +extern s32 g_Ps5BootGoldenEye; // main.c: --ps5-goldeneye
++#endif
++#ifdef PLATFORM_PS5
 +extern s32 g_Ps5SetupDone; // optionsmenu.c: the PS5 Settings page was seen once
 +extern struct menudialogdef g_Ps5SetupMenuDialog;
 +#endif
@@ -4076,17 +4153,20 @@ index ea7811d68..61d9ee9ed 100644
  MenuDialogHandlerResult menudialogMainMenu(s32 operation, struct menudialogdef *dialogdef, union handlerdata *data)
  {
  	switch (operation) {
-@@ -5359,6 +5373,30 @@ MenuDialogHandlerResult menudialogMainMenu(s32 operation, struct menudialogdef *
+@@ -5359,6 +5375,33 @@ MenuDialogHandlerResult menudialogMainMenu(s32 operation, struct menudialogdef *
  			updatenoticeMainMenuTick(dialogdef, data->dialog2.inputs, true);
  			// netplay: why the last net game ended
  			if (g_NetNoticePending || g_NetLobbyRoom) netMainMenuTick();
-+#ifdef PLATFORM_PS5
++#if defined(PLATFORM_PS5) || defined(PD_TILE_TEST)
 +			// The PS5's GoldenEye tile (PPSA64008) goes straight into GoldenEye,
 +			// once, the way its Perfect Menu row does
 +			// The first start's settings page first; GoldenEye opens when it closes
++#ifdef PLATFORM_PS5
 +			if (!g_Ps5SetupDone) {
 +				menuPushDialog(&g_Ps5SetupMenuDialog);
-+			} else if (g_Ps5BootGoldenEye) {
++			} else
++#endif
++			if (g_Ps5BootGoldenEye) {
 +				g_Ps5BootGoldenEye = false;
 +
 +				if (!modModeIsActive() && gexPlusFirstArena() >= 0) {
