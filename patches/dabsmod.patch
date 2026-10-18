@@ -1,18 +1,24 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 98b574212..ba90209ec 100644
+index 98b574212..fcd59866e 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -67,6 +67,9 @@ elseif(APPLE)
+@@ -67,6 +67,15 @@ elseif(APPLE)
  elseif(NINTENDO_SWITCH)
    # Switch
    set(TARGET_OS "nswitch")
 +elseif(PS5)
 +  # PS5 homebrew title (the PS5 port's cmake/ps5-toolchain.cmake sets PS5)
 +  set(TARGET_OS "ps5")
++  # Where Check for Updates finds new PS5 builds: the Perfect Eye repo's releases,
++  # e.g. https://github.com/<owner>/perfect-eye/releases. Empty: no updates.
++  set(PS5_UPDATE_REPO "" CACHE STRING "Perfect Eye releases URL for the PS5 updater")
++  if(PS5_UPDATE_REPO)
++    add_definitions(-DPS5_UPDATE_REPO="${PS5_UPDATE_REPO}")
++  endif()
  elseif(UNIX)
    # Generic *nix; assume Linux
    set(TARGET_OS "linux")
-@@ -278,7 +281,13 @@ endif()
+@@ -278,7 +287,13 @@ endif()
  set(LIBS )
  
  # SDL2
@@ -26,7 +32,7 @@ index 98b574212..ba90209ec 100644
  if(NINTENDO_SWITCH)
    if(NOT SDL2_LIBRARY OR NOT SDL2_INCLUDE_DIR)
      # sometimes FindSDL2 just wants us to suffer and does not set these
-@@ -290,7 +299,13 @@ include_directories(SYSTEM "${SDL2_INCLUDE_DIR}")
+@@ -290,7 +305,13 @@ include_directories(SYSTEM "${SDL2_INCLUDE_DIR}")
  list(APPEND LIBS "${SDL2_LIBRARY}")
  
  # ZLib
@@ -40,7 +46,7 @@ index 98b574212..ba90209ec 100644
  
  # What Ghost Trials reaches the ghost server over. See the note at the top of
  # port/src/ghostnet.c for why this is two different things.
-@@ -304,7 +319,14 @@ else()
+@@ -304,7 +325,14 @@ else()
    # libcurl everywhere else, there being no system HTTP API to use instead.
    # macOS carries it in the SDK; on Linux it is libcurl4-openssl-dev to build
    # against and libcurl4, which every desktop already has, to run.
@@ -55,7 +61,7 @@ index 98b574212..ba90209ec 100644
  
    if(CURL_FOUND)
      message(STATUS "libcurl found - ghost server support enabled")
-@@ -325,7 +347,9 @@ endif()
+@@ -325,7 +353,9 @@ endif()
  if(ZLIB_INCLUDE_DIR)
    include_directories(SYSTEM "${ZLIB_INCLUDE_DIR}")
  endif()
@@ -66,7 +72,7 @@ index 98b574212..ba90209ec 100644
  
  # GL
  if(NOT GL_LIBRARY)
-@@ -335,11 +359,16 @@ if(NOT GL_LIBRARY)
+@@ -335,11 +365,16 @@ if(NOT GL_LIBRARY)
      set(GL_LIBRARY EGL glapi drm_nouveau)
    elseif(APPLE)
      set(GL_LIBRARY "-framework OpenGL")
@@ -84,7 +90,7 @@ index 98b574212..ba90209ec 100644
  
  # Vulkan: the second renderer (port/fast3d/gfx_vulkan.cpp, Video.Renderer).
  # Nothing links against a Vulkan library - SDL finds the loader at run time,
-@@ -368,13 +397,16 @@ if(PD_VULKAN AND NOT NINTENDO_SWITCH)
+@@ -368,13 +403,16 @@ if(PD_VULKAN AND NOT NINTENDO_SWITCH)
      endforeach()
      # MSYS2's shaderc is built on winpthreads, which Windows links whole and
      # static below, for everything
@@ -103,7 +109,7 @@ index 98b574212..ba90209ec 100644
      # That it all links, which a split or partial install may not
      include(CheckCXXSourceCompiles)
      set(CMAKE_REQUIRED_INCLUDES "${SHADERC_INCLUDE_DIR}")
-@@ -422,6 +454,9 @@ if(NOT EXTRA_LIBRARIES)
+@@ -422,6 +460,9 @@ if(NOT EXTRA_LIBRARIES)
          -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive,-Bdynamic)
    elseif(NINTENDO_SWITCH)
      set(EXTRA_LIBRARIES stdc++ pthread)
@@ -130,10 +136,10 @@ index 69b2d8252..0dd5bad4d 100644
  #define ENET_IMPLEMENTATION 1
  #define ENET_NO_PRAGMA_LINK 1
 diff --git a/port/fast3d/gfx_vulkan.cpp b/port/fast3d/gfx_vulkan.cpp
-index 687f3fa7b..6a2dd99b2 100644
+index 687f3fa7b..d277bc9c4 100644
 --- a/port/fast3d/gfx_vulkan.cpp
 +++ b/port/fast3d/gfx_vulkan.cpp
-@@ -60,6 +60,13 @@
+@@ -60,6 +60,17 @@
  #include <SDL_vulkan.h>
  #include <shaderc/shaderc.h>
  
@@ -142,12 +148,16 @@ index 687f3fa7b..6a2dd99b2 100644
 +// stands in for the loader. The console has no windows: the swapchain presents
 +// to the display plane through VK_KHR_display.
 +extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vk_icdGetInstanceProcAddr(VkInstance instance, const char *name);
++// The display mode's refresh rate in millihertz (119880 when the TV took the PS5's 120 Hz
++// output, which param.json's attribute3 asks for), for video.c to raise the frame rate.
++extern "C" int g_Ps5DisplayRefreshMhz;
++int g_Ps5DisplayRefreshMhz = 0;
 +#endif
 +
  #ifndef _LANGUAGE_C
  #define _LANGUAGE_C
  #endif
-@@ -4578,8 +4585,12 @@ static PFN_vkGetInstanceProcAddr vk_load_loader_headless(void) {
+@@ -4578,8 +4589,12 @@ static PFN_vkGetInstanceProcAddr vk_load_loader_headless(void) {
  static bool vk_init_instance(SDL_Window *wnd, bool debug) {
      const bool headless = gfx_sdl_vulkan_headless() != 0;
  
@@ -160,7 +170,7 @@ index 687f3fa7b..6a2dd99b2 100644
      if (!vk_get_instance_proc) {
          vk_fail("no Vulkan loader: %s", SDL_GetError());
          return false;
-@@ -4595,13 +4606,24 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
+@@ -4595,13 +4610,24 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
      if (vk_enumerate_instance_version) {
          vk_enumerate_instance_version(&loader_version);
      }
@@ -185,7 +195,7 @@ index 687f3fa7b..6a2dd99b2 100644
          uint32_t count = 0;
          vkEnumerateInstanceExtensionProperties(NULL, &count, NULL);
          std::vector<VkExtensionProperties> avail(count);
-@@ -4688,7 +4710,66 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
+@@ -4688,7 +4714,67 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
          }
      }
  
@@ -242,6 +252,7 @@ index 687f3fa7b..6a2dd99b2 100644
 +            return false;
 +        }
 +        SDL_SetWindowSize(wnd, (int)ext.width, (int)ext.height);
++        g_Ps5DisplayRefreshMhz = (int)modes[0].parameters.refreshRate;
 +        sysLogPrintf(LOG_NOTE, "Vulkan: display plane %ux%u at %u mHz (%s)", ext.width, ext.height,
 +                     modes[0].parameters.refreshRate, disp.displayName ? disp.displayName : "display");
 +    }
@@ -252,6 +263,277 @@ index 687f3fa7b..6a2dd99b2 100644
          // The swapchain takes the window's size (currentExtent is undefined
          // on a headless surface) and is read back like any other
          PFN_vkCreateHeadlessSurfaceEXT create_headless =
+diff --git a/port/include/external/enet.h b/port/include/external/enet.h
+index 0aebf703a..3e08a6dbd 100644
+--- a/port/include/external/enet.h
++++ b/port/include/external/enet.h
+@@ -727,6 +727,9 @@ extern "C" {
+ 	ENET_API int enet_address_get_hostname(const ENetAddress*, char*, size_t);
+ 
+ 	ENET_API ENetSocket enet_socket_create(ENetSocketType);
++#ifndef _WIN32
++	ENET_API int enet_socket_is_ipv4_only(void); // PD: the IPv4-only fallback is in use
++#endif
+ 	ENET_API int enet_socket_bind(ENetSocket, const ENetAddress*);
+ 	ENET_API int enet_socket_get_address(ENetSocket, ENetAddress*);
+ 	ENET_API int enet_socket_listen(ENetSocket, int);
+@@ -4343,6 +4346,10 @@ extern "C" {
+ 		memset(&hints, 0, sizeof(hints));
+ 
+ 		hints.ai_family = AF_UNSPEC;
++#ifndef _WIN32
++		if (enet_socket_is_ipv4_only())
++			hints.ai_family = AF_INET; // PD: an IPv4-only socket cannot reach an AAAA answer
++#endif
+ 
+ 		if (getaddrinfo(name, NULL, &hints, &resultList) != 0)
+ 			return -1;
+@@ -4437,22 +4444,99 @@ extern "C" {
+ 			return (timeVal.tv_sec * 1000) ^ (timeVal.tv_usec / 1000);
+ 		}
+ 
+-		int enet_socket_bind(ENetSocket socket, const ENetAddress* address) {
+-			struct sockaddr_in6 sin;
++		/* PD: IPv4-only fallback. ENet6 runs on one dual-stack IPv6 socket and keeps IPv4
++		 * peers as v4-mapped addresses. A network stack that cannot give that socket (the
++		 * PS5's is unproven) gets a plain IPv4 socket instead, with the mapped addresses
++		 * turned into sockaddr_in at the system call and back. PD_ENET_IPV4=1 forces it. */
++		static int enet_v4only = -1;
+ 
+-			memset(&sin, 0, sizeof(struct sockaddr_in6));
++		static int enet_use_v4(void) {
++			if (enet_v4only < 0) {
++				const char* force = getenv("PD_ENET_IPV4");
++				int s = (force != NULL && force[0] == '1') ? -1 : socket(PF_INET6, SOCK_DGRAM, 0);
++				int off = 0;
+ 
+-			sin.sin6_family = AF_INET6;
++				enet_v4only = (s < 0 || setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY, (char*)&off, sizeof(int)) != 0) ? 1 : 0;
+ 
+-			if (address != NULL) {
+-				sin.sin6_port = ENET_HOST_TO_NET_16(address->port);
+-				sin.sin6_addr = address->ipv6;
++				if (s >= 0)
++					close(s);
++			}
++
++			return enet_v4only;
++		}
++
++		int enet_socket_is_ipv4_only(void) {
++			return enet_use_v4();
++		}
++
++		/* An ENetAddress as the socket's own family wants it; 0 when an IPv4 socket is asked
++		 * to reach a real IPv6 address, which it cannot. */
++		static socklen_t enet_to_sockaddr(const ENetAddress* address, struct sockaddr_storage* ss) {
++			memset(ss, 0, sizeof(*ss));
++
++			if (enet_use_v4()) {
++				struct sockaddr_in* sin = (struct sockaddr_in*)ss;
++				static const uint8_t zeros[16] = { 0 };
++
++				sin->sin_family = AF_INET;
++				sin->sin_port = ENET_HOST_TO_NET_16(address->port);
++
++				if (memcmp(&address->ipv6, zeros, 16) == 0) {
++					sin->sin_addr.s_addr = INADDR_ANY;
++				} else if (memcmp(address->ipv4.zeros, zeros, sizeof(address->ipv4.zeros)) == 0 && address->ipv4.ffff == 0xFFFF) {
++					sin->sin_addr = address->ipv4.ip;
++				} else {
++					return 0;
++				}
++
++				return sizeof(struct sockaddr_in);
+ 			} else {
+-				sin.sin6_port = 0;
+-				sin.sin6_addr = ENET_HOST_ANY;
++				struct sockaddr_in6* sin = (struct sockaddr_in6*)ss;
++
++				sin->sin6_family = AF_INET6;
++				sin->sin6_port = ENET_HOST_TO_NET_16(address->port);
++				sin->sin6_addr = address->ipv6;
++
++				return sizeof(struct sockaddr_in6);
++			}
++		}
++
++		static void enet_from_sockaddr(const struct sockaddr_storage* ss, ENetAddress* address) {
++			if (ss->ss_family == AF_INET) {
++				const struct sockaddr_in* sin = (const struct sockaddr_in*)ss;
++
++				memset(address, 0, sizeof(address->ipv4.zeros));
++
++				address->ipv4.ffff = 0xFFFF;
++				address->ipv4.ip = sin->sin_addr;
++				address->port = ENET_NET_TO_HOST_16(sin->sin_port);
++			} else {
++				const struct sockaddr_in6* sin = (const struct sockaddr_in6*)ss;
++
++				address->ipv6 = sin->sin6_addr;
++				address->port = ENET_NET_TO_HOST_16(sin->sin6_port);
++			}
++		}
++
++		int enet_socket_bind(ENetSocket socket, const ENetAddress* address) {
++			struct sockaddr_storage ss;
++			ENetAddress any;
++			socklen_t len;
++
++			if (address == NULL) {
++				memset(&any, 0, sizeof(any));
++				any.ipv6 = ENET_HOST_ANY;
++				address = &any;
+ 			}
+ 
+-			return bind(socket, (struct sockaddr*)&sin, sizeof(struct sockaddr_in6));
++			len = enet_to_sockaddr(address, &ss);
++
++			if (len == 0) {
++				errno = EAFNOSUPPORT;
++				return -1;
++			}
++
++			return bind(socket, (struct sockaddr*)&ss, len);
+ 		}
+ 
+ 		int enet_socket_get_address(ENetSocket socket, ENetAddress* address) {
+@@ -4491,7 +4575,7 @@ extern "C" {
+ 				socketType |= SOCK_CLOEXEC;
+ 			#endif
+ 
+-			return socket(PF_INET6, socketType, 0);
++			return socket(enet_use_v4() ? PF_INET : PF_INET6, socketType, 0);
+ 		}
+ 
+ 		int enet_socket_set_option(ENetSocket socket, ENetSocketOption option, int value) {
+@@ -4549,7 +4633,7 @@ extern "C" {
+ 					break;
+ 
+ 				case ENET_SOCKOPT_IPV6_V6ONLY:
+-					result = setsockopt(socket, IPPROTO_IPV6, IPV6_V6ONLY, (char*)&value, sizeof(int));
++					result = enet_use_v4() ? 0 : setsockopt(socket, IPPROTO_IPV6, IPV6_V6ONLY, (char*)&value, sizeof(int));
+ 
+ 					break;
+ 
+@@ -4580,15 +4664,15 @@ extern "C" {
+ 
+ 		int enet_socket_connect(ENetSocket socket, const ENetAddress* address) {
+ 			int result = -1;
+-			struct sockaddr_in6 sin;
+-
+-			memset(&sin, 0, sizeof(struct sockaddr_in6));
++			struct sockaddr_storage ss;
++			socklen_t len = enet_to_sockaddr(address, &ss);
+ 
+-			sin.sin6_family = AF_INET6;
+-			sin.sin6_port = ENET_HOST_TO_NET_16(address->port);
+-			sin.sin6_addr = address->ipv6;
++			if (len == 0) {
++				errno = EAFNOSUPPORT;
++				return -1;
++			}
+ 
+-			result = connect(socket, (struct sockaddr*)&sin, sizeof(struct sockaddr_in6));
++			result = connect(socket, (struct sockaddr*)&ss, len);
+ 
+ 			if (result == -1 && errno == EINPROGRESS)
+ 				return 0;
+@@ -4598,18 +4682,16 @@ extern "C" {
+ 
+ 		ENetSocket enet_socket_accept(ENetSocket socket, ENetAddress* address) {
+ 			int result = -1;
+-			struct sockaddr_in6 sin;
+-			socklen_t sinLength = sizeof(struct sockaddr_in6);
++			struct sockaddr_storage ss;
++			socklen_t sinLength = sizeof(ss);
+ 
+-			result = accept(socket, address != NULL ? (struct sockaddr*)&sin : NULL, address != NULL ? &sinLength : NULL);
++			result = accept(socket, address != NULL ? (struct sockaddr*)&ss : NULL, address != NULL ? &sinLength : NULL);
+ 
+ 			if (result == -1)
+ 				return ENET_SOCKET_NULL;
+ 
+-			if (address != NULL) {
+-				address->ipv6 = sin.sin6_addr;
+-				address->port = ENET_NET_TO_HOST_16(sin.sin6_port);
+-			}
++			if (address != NULL)
++				enet_from_sockaddr(&ss, address);
+ 
+ 			return result;
+ 		}
+@@ -4625,19 +4707,18 @@ extern "C" {
+ 
+ 		int enet_socket_send(ENetSocket socket, const ENetAddress* address, const ENetBuffer* buffers, size_t bufferCount) {
+ 			struct msghdr msgHdr;
+-			struct sockaddr_in6 sin;
++			struct sockaddr_storage ss;
+ 			int sentLength;
+ 
+ 			memset(&msgHdr, 0, sizeof(struct msghdr));
+ 
+ 			if (address != NULL) {
+-				memset(&sin, 0, sizeof(struct sockaddr_in6));
++				msgHdr.msg_namelen = enet_to_sockaddr(address, &ss);
+ 
+-				sin.sin6_family = AF_INET6;
+-				sin.sin6_port = ENET_HOST_TO_NET_16(address->port);
+-				sin.sin6_addr = address->ipv6;
+-				msgHdr.msg_name = &sin;
+-				msgHdr.msg_namelen = sizeof(struct sockaddr_in6);
++				if (msgHdr.msg_namelen == 0)
++					return -1; // an IPv6 peer, unreachable from an IPv4 socket
++
++				msgHdr.msg_name = &ss;
+ 			}
+ 
+ 			msgHdr.msg_iov = (struct iovec*)buffers;
+@@ -4656,14 +4737,15 @@ extern "C" {
+ 
+ 		int enet_socket_receive(ENetSocket socket, ENetAddress* address, ENetBuffer* buffers, size_t bufferCount) {
+ 			struct msghdr msgHdr;
+-			struct sockaddr_in6 sin;
++			struct sockaddr_storage ss;
+ 			int recvLength;
+ 
+ 			memset(&msgHdr, 0, sizeof(struct msghdr));
++			memset(&ss, 0, sizeof(ss));
+ 
+ 			if (address != NULL) {
+-				msgHdr.msg_name = &sin;
+-				msgHdr.msg_namelen = sizeof(struct sockaddr_in6);
++				msgHdr.msg_name = &ss;
++				msgHdr.msg_namelen = sizeof(ss);
+ 			}
+ 
+ 			msgHdr.msg_iov = (struct iovec*)buffers;
+@@ -4680,10 +4762,8 @@ extern "C" {
+ 			if (msgHdr.msg_flags & MSG_TRUNC)
+ 				return -2;
+ 
+-			if (address != NULL) {
+-				address->ipv6 = sin.sin6_addr;
+-				address->port = ENET_NET_TO_HOST_16(sin.sin6_port);
+-			}
++			if (address != NULL)
++				enet_from_sockaddr(&ss, address);
+ 
+ 			return recvLength;
+ 		}
+diff --git a/port/include/input.h b/port/include/input.h
+index a15376e4c..c745c7c4d 100644
+--- a/port/include/input.h
++++ b/port/include/input.h
+@@ -211,6 +211,8 @@ s32 inputGetKeyByName(const char *name);
+ 
+ // get human-readable name from VK_ value
+ const char *inputGetKeyName(s32 vk);
++// the name a menu shows: a DualSense's own button names on the PS5
++const char *inputGetKeyDisplayName(s32 vk);
+ 
+ // get CK_ value from human-readable name
+ s32 inputGetContKeyByName(const char *name);
 diff --git a/port/src/ghostnet.c b/port/src/ghostnet.c
 index ecfb59a65..53a2a6281 100644
 --- a/port/src/ghostnet.c
@@ -267,6 +549,112 @@ index ecfb59a65..53a2a6281 100644
  	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, ghostnetCurlWrite);
  	curl_easy_setopt(curl, CURLOPT_WRITEDATA, buf);
  	curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)(req->timeout > 0 ? req->timeout : GHOSTNET_TIMEOUT));
+diff --git a/port/src/input.c b/port/src/input.c
+index a5e75de49..c8922dfa2 100644
+--- a/port/src/input.c
++++ b/port/src/input.c
+@@ -13,6 +13,12 @@
+ #include "utils.h"
+ #include "system.h"
+ #include "fs.h"
++#ifdef PLATFORM_PS5
++#include "types.h"
++#include "bss.h"
++#include "data.h"
++#include "game/radar.h"
++#endif
+ 
+ #if !SDL_VERSION_ATLEAST(2, 0, 14)
+ // this was added in 2.0.14
+@@ -1368,12 +1374,52 @@ static inline void inputUpdateMouse(void)
+ 	}
+ }
+ 
++#ifdef PLATFORM_PS5
++/**
++ * Each controller's light bar shows its player: the team's colour in a team
++ * match on this console, otherwise the PS5's own player colours (blue, red,
++ * green, pink) by controller. Sent only when it changes, and again to a
++ * controller that has just taken the slot.
++ */
++static void inputPs5UpdateLightBars(void)
++{
++	static const u32 playercolours[4] = { 0x0040ffff, 0xff2020ff, 0x20e040ff, 0xff40c0ff };
++	static u32 sent[INPUT_MAX_CONTROLLERS];
++	static SDL_GameController *sentto[INPUT_MAX_CONTROLLERS];
++
++	for (s32 i = 0; i < INPUT_MAX_CONTROLLERS && i < 4; i++) {
++		u32 rgba = playercolours[i];
++
++		if (!pads[i]) {
++			sentto[i] = NULL;
++			continue;
++		}
++
++		if (g_NetMode == NETMODE_NONE && g_Vars.normmplayerisrunning
++				&& (g_MpSetup.options & MPOPTION_TEAMSENABLED)
++				&& g_Vars.players[i] && g_Vars.players[i]->prop && g_Vars.players[i]->prop->chr) {
++			rgba = g_TeamColours[radarGetTeamIndex(g_Vars.players[i]->prop->chr->team)];
++		}
++
++		if (rgba != sent[i] || pads[i] != sentto[i]) {
++			SDL_GameControllerSetLED(pads[i], (rgba >> 24) & 0xff, (rgba >> 16) & 0xff, (rgba >> 8) & 0xff);
++			sent[i] = rgba;
++			sentto[i] = pads[i];
++		}
++	}
++}
++#endif
++
+ void inputUpdate(void)
+ {
+ 	if (g_NetDedicated) return;
+ 
+ 	SDL_GameControllerUpdate();
+ 
++#ifdef PLATFORM_PS5
++	inputPs5UpdateLightBars();
++#endif
++
+ 	if (mouseEnabled) {
+ 		inputUpdateMouse();
+ 	}
+@@ -1908,6 +1954,35 @@ const char *inputGetKeyName(s32 vk)
+ 	return vkNames[vk];
+ }
+ 
++/**
++ * The name a menu shows for a key. Everywhere but the PS5 that is the name
++ * pd.ini stores; on the PS5 a controller's buttons are given the DualSense's
++ * own names (CROSS, L1, OPTIONS...), while pd.ini keeps SDL's.
++ */
++const char *inputGetKeyDisplayName(s32 vk)
++{
++	const char *name = inputGetKeyName(vk);
++#ifdef PLATFORM_PS5
++	static const char *const ps[][2] = {
++		{ "A", "CROSS" }, { "B", "CIRCLE" }, { "X", "SQUARE" }, { "Y", "TRIANGLE" },
++		{ "BACK", "CREATE" }, { "GUIDE", "PS" }, { "START", "OPTIONS" },
++		{ "LSTICK", "L3" }, { "RSTICK", "R3" }, { "LSHOULDER", "L1" }, { "RSHOULDER", "R1" },
++		{ "LTRIGGER", "L2" }, { "RTRIGGER", "R2" }, { "TOUCHPAD", "TOUCHPAD" },
++	};
++	static char out[64];
++
++	if (!strncmp(name, "JOY", 3) && isdigit((unsigned char)name[3]) && name[4] == '_') {
++		for (u32 i = 0; i < sizeof(ps) / sizeof(ps[0]); i++) {
++			if (!strcmp(name + 5, ps[i][0])) {
++				snprintf(out, sizeof(out), "PAD%c_%s", name[3], ps[i][1]);
++				return out;
++			}
++		}
++	}
++#endif
++	return name;
++}
++
+ s32 inputGetKeyByName(const char *name)
+ {
+ 	s32 start = 0;
 diff --git a/port/src/main.c b/port/src/main.c
 index 52d3fdc46..f51504248 100644
 --- a/port/src/main.c
@@ -314,6 +702,37 @@ index 3842267e4..79d52900f 100644
  
  #include <stdlib.h>
  #include <stdio.h>
+diff --git a/port/src/optionsmenu.c b/port/src/optionsmenu.c
+index 76cceaa09..e6dbe6b83 100644
+--- a/port/src/optionsmenu.c
++++ b/port/src/optionsmenu.c
+@@ -2620,7 +2620,7 @@ static MenuItemHandlerResult menuhandlerBind(s32 operation, struct menuitem *ite
+ 	case MENUOP_GETOPTIONTEXT:
+ 		binds = inputKeyGetBinds(g_ExtMenuPlayer, menuBinds[idx].ck);
+ 		if (binds && binds[data->dropdown.value]) {
+-			strncpy(keyname, inputGetKeyName(binds[data->dropdown.value]), sizeof(keyname) - 1);
++			strncpy(keyname, inputGetKeyDisplayName(binds[data->dropdown.value]), sizeof(keyname) - 1);
+ 			for (char *p = keyname; *p; ++p) {
+ 				if (*p == '_') *p = ' ';
+ 			}
+@@ -4619,7 +4619,7 @@ static MenuItemHandlerResult menuhandlerModBind(s32 operation, struct menuitem *
+ 	case MENUOP_GETOPTIONTEXT:
+ 		binds = inputKeyGetBinds(g_ExtMenuPlayer, modMenuBinds[idx].ck);
+ 		if (binds && binds[data->dropdown.value]) {
+-			strncpy(keyname, inputGetKeyName(binds[data->dropdown.value]), sizeof(keyname) - 1);
++			strncpy(keyname, inputGetKeyDisplayName(binds[data->dropdown.value]), sizeof(keyname) - 1);
+ 			for (char *p = keyname; *p; ++p) {
+ 				if (*p == '_') *p = ' ';
+ 			}
+@@ -5059,7 +5059,7 @@ static MenuItemHandlerResult menuhandlerModKeyBind(s32 operation, struct menuite
+ 		break;
+ 	case MENUOP_GETOPTIONTEXT:
+ 		if (vk > 0) {
+-			strncpy(keyname, inputGetKeyName(vk), sizeof(keyname) - 1);
++			strncpy(keyname, inputGetKeyDisplayName(vk), sizeof(keyname) - 1);
+ 			keyname[sizeof(keyname) - 1] = '\0';
+ 			for (char *p = keyname; *p; ++p) {
+ 				if (*p == '_') *p = ' ';
 diff --git a/port/src/record.c b/port/src/record.c
 index b5b178af9..19caf8616 100644
 --- a/port/src/record.c
@@ -401,23 +820,127 @@ index 0d3cce18c..501d1864f 100644
  		// Last, so the pack the player chose in the menu wins over any
  		// textures/ a mod happens to ship. One scan covers both layouts -
 diff --git a/port/src/update.c b/port/src/update.c
-index b32b6b917..8fc77edcc 100644
+index b32b6b917..4879cfd9a 100644
 --- a/port/src/update.c
 +++ b/port/src/update.c
-@@ -1203,7 +1203,7 @@ void updateInstall(void)
+@@ -59,9 +59,22 @@
+ // server's decision rather than becoming a version comparison written here.
+ // Dev names its tag because the rolling prerelease is one tag that the release
+ // job keeps moving, and "latest" would never point at it.
++#ifdef PLATFORM_PS5
++// The PS5 builds come from the Perfect Eye repo, which rebuilds one for every
++// dev build of Dab's Mod and keeps it on its rolling ps5-dev release (CMake's
++// PS5_UPDATE_REPO). There is no PS5 stable channel.
++#ifdef PS5_UPDATE_REPO
++#define UPDATE_REPO PS5_UPDATE_REPO
++#else
++#define UPDATE_REPO ""
++#endif
++#define UPDATE_URL_STABLE UPDATE_REPO "/download/ps5-dev"
++#define UPDATE_URL_DEV    UPDATE_REPO "/download/ps5-dev"
++#else
+ #define UPDATE_REPO "https://github.com/DabDavis/perfect-dark-dabs-mod/releases"
+ #define UPDATE_URL_STABLE UPDATE_REPO "/latest/download"
+ #define UPDATE_URL_DEV    UPDATE_REPO "/download/dabs-mod-dev"
++#endif
+ 
+ // The manifest, which is the only thing here that is not a file the CI already
+ // had a reason to build. It is written by the release job and read by this.
+@@ -208,7 +221,11 @@ static void updateSetResult(s32 state, const char *msg)
+  */
+ static bool updateSelfPath(char *out, u32 outsize)
+ {
+-#if defined(PLATFORM_WIN32)
++#if defined(PLATFORM_PS5)
++	// a title is always its folder's eboot.bin
++	snprintf(out, outsize, "/app0/eboot.bin");
++	return true;
++#elif defined(PLATFORM_WIN32)
+ 	wchar_t wide[FS_MAXPATH];
+ 	DWORD len = GetModuleFileNameW(NULL, wide, ARRAYCOUNT(wide));
+ 
+@@ -408,6 +425,14 @@ static bool updateFetchManifestFrom(const char *base, struct updaterel *out, cha
+  */
+ static void updateFetchOther(void)
+ {
++#ifdef PLATFORM_PS5
++	// one channel only: nothing to switch to
++	SDL_LockMutex(g_Lock);
++	g_OtherKnown = false;
++	g_OtherAsked = true;
++	SDL_UnlockMutex(g_Lock);
++	return;
++#endif
+ 	struct updaterel rel;
+ 	char err[160] = { 0 };
+ 	bool ok = updateFetchManifestFrom(updateOtherBaseUrl(), &rel, err, sizeof(err));
+@@ -777,7 +802,7 @@ static bool updateDownload(bool other, char *msg, u32 msgsize)
+ 		return false;
+ 	}
+ 
+-#ifndef PLATFORM_WIN32
++#if !defined(PLATFORM_WIN32) && !defined(PLATFORM_PS5) // a title's eboot is not exec()ed by its mode bits
+ 	// The package the release job builds carries the executable bit; a file
+ 	// this wrote itself does not, and a copy of the game nothing can start is
+ 	// the same as no copy at all.
+@@ -1203,7 +1228,9 @@ void updateInstall(void)
  
  bool updateIsAvailable(void)
  {
 -#ifdef PD_GHOST_NET
-+#if defined(PD_GHOST_NET) && !defined(PLATFORM_PS5) // a PS5 title is replaced by FTP, not by the updater
++#if defined(PLATFORM_PS5) && !defined(PS5_UPDATE_REPO)
++	return false; // a build with no Perfect Eye repo to follow
++#elif defined(PD_GHOST_NET)
  	return true;
  #else
  	return false;
+@@ -1428,6 +1455,10 @@ static void updateExec(const char *path)
+ 
+ 		_spawnv(_P_NOWAIT, path, quoted ? quoted : argv);
+ 	}
++#elif defined(PLATFORM_PS5)
++	// A title cannot start a program: the new eboot.bin runs the next time the
++	// player starts the game from the home screen
++	(void)path;
+ #else
+ 	execv(path, (char *const *)sysGetArgv());
+ 	// Only reached if the new build could not be started at all, which leaves
+diff --git a/port/src/updatemenu.c b/port/src/updatemenu.c
+index 06123262a..d43711808 100644
+--- a/port/src/updatemenu.c
++++ b/port/src/updatemenu.c
+@@ -96,7 +96,11 @@ static char *menutextUpdateAction(struct menuitem *item)
+ 		snprintf(g_UpdateText, sizeof(g_UpdateText), langTr("Download and Install %s\n"), updateGetVersion());
+ 		return g_UpdateText;
+ 	case UPDATE_STAGED:
++#ifdef PLATFORM_PS5
++		return (char *)langTr("Quit Now (start it again from the home screen)\n");
++#else
+ 		return (char *)langTr("Restart Now\n");
++#endif
+ 	default:
+ 		break;
+ 	}
 diff --git a/port/src/video.c b/port/src/video.c
-index 1481b7a61..a8c88ac5c 100644
+index 1481b7a61..4b7068d4a 100644
 --- a/port/src/video.c
 +++ b/port/src/video.c
-@@ -276,6 +276,16 @@ s32 videoInit(void)
+@@ -77,6 +77,14 @@ static s32 vidSupersampling = 0;
+ static s32 vidTaa = 0;
+ static const f32 vidSupersamplingScales[VIDEO_SUPERSAMPLING_COUNT] = { 1.f, 1.5f, 2.f };
+ static s32 vidFramerateLimit = 0;
++#ifdef PLATFORM_PS5
++// 120 fps on a TV that takes the PS5's 120 Hz output: the game's tick rate
++// uncapped (Extended Video Options, Uncap Tickrate) and paced by the display.
++// Off keeps whatever the player set there.
++static s32 vidPs5HighFrameRate = 1;
++extern int g_Ps5DisplayRefreshMhz;
++extern s32 g_TickRateDiv;
++#endif
+ // Video.Renderer: VIDEO_RENDERER_OPENGL or VIDEO_RENDERER_VULKAN, taking
+ // effect at the next start. vidRendererActive is what this run got, which is
+ // OpenGL whenever Vulkan was asked for and could not start.
+@@ -276,6 +284,16 @@ s32 videoInit(void)
  	}
  	videoSetFsrSharpness(vidFsrSharpness);
  
@@ -434,7 +957,7 @@ index 1481b7a61..a8c88ac5c 100644
  	struct GfxInitSettings set = {
  		.wapi = wmAPI,
  		.rapi = renderingAPI,
-@@ -297,6 +307,10 @@ s32 videoInit(void)
+@@ -297,6 +315,10 @@ s32 videoInit(void)
  
  #ifdef PD_HAVE_VULKAN
  	if (renderingAPI == &gfx_vulkan_api && gfx_vulkan_failed()) {
@@ -445,6 +968,35 @@ index 1481b7a61..a8c88ac5c 100644
  		// The window goes and comes back for OpenGL; the setting is left as it
  		// is, so a driver installed later is picked up without visiting the menu
  		sysLogPrintf(LOG_WARNING, "VIDEO: Vulkan could not start, using OpenGL");
+@@ -311,6 +333,18 @@ s32 videoInit(void)
+ 
+ 	sysLogPrintf(LOG_NOTE, "VIDEO: renderer %s", renderingAPI->get_name());
+ 
++#ifdef PLATFORM_PS5
++	if (g_Ps5DisplayRefreshMhz > 100000) {
++		if (vidPs5HighFrameRate) {
++			g_TickRateDiv = 0;
++		}
++		sysLogPrintf(LOG_NOTE, "VIDEO: PS5 output at %d.%03d Hz, %s", g_Ps5DisplayRefreshMhz / 1000,
++				g_Ps5DisplayRefreshMhz % 1000, vidPs5HighFrameRate ? "frame rate uncapped for 120 fps" : "Video.PS5HighFrameRate is off");
++	} else {
++		sysLogPrintf(LOG_NOTE, "VIDEO: PS5 output at %d.%03d Hz", g_Ps5DisplayRefreshMhz / 1000, g_Ps5DisplayRefreshMhz % 1000);
++	}
++#endif
++
+ 	videoInitDisplayModes();
+ 	videoSetVsync(vidVsync);
+ 	videoSetFramerateLimit(vidFramerateLimit);
+@@ -1349,6 +1383,9 @@ PD_CONSTRUCTOR static void videoConfigInit(void)
+ 	configRegisterInt("Video.VSync", &vidVsync, -1, 10);
+ 	configRegisterInt("Video.FramebufferEffects", &vidFramebuffers, 0, 1);
+ 	configRegisterInt("Video.FramerateLimit", &vidFramerateLimit, 0, VIDEO_MAX_FPS);
++#ifdef PLATFORM_PS5
++	configRegisterInt("Video.PS5HighFrameRate", &vidPs5HighFrameRate, 0, 1);
++#endif
+ 	configRegisterInt("Video.DisplayFPS", &vidDisplayFPS, 0, 1);
+ 	configRegisterFloat("Video.DisplayFPSInterval", &vidDisplayFPSInterval, 0.01f, 32.f);
+ 	configRegisterInt("Video.MSAA", &vidMSAA, 1, 16);
 diff --git a/src/include/platform.h b/src/include/platform.h
 index 79a1864e8..ffa387037 100644
 --- a/src/include/platform.h

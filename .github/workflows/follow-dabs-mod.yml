@@ -1,0 +1,113 @@
+# Builds a PS5 eboot.bin for every dev build of Dab's Mod, so a PS5 can stay on the
+# same build as PC players (online play compares builds). Runs every three hours,
+# builds only when Dab's Mod's dev release names a commit this repo has not built,
+# and publishes to the rolling ps5-dev prerelease that the game's Check for Updates
+# reads (port/src/update.c, PLATFORM_PS5). No ROM, texture pack or game data is
+# ever built in or uploaded.
+name: Follow Dab's Mod
+
+on:
+  schedule:
+    - cron: "17 */3 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Build even if this commit was already built"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: follow-dabs-mod
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DABS_DEV: https://github.com/DabDavis/perfect-dark-dabs-mod/releases/download/dabs-mod-dev
+    steps:
+      - name: What Dab's Mod's dev build is
+        id: dabs
+        run: |
+          curl -sfL "$DABS_DEV/update.txt" -o dabs-update.txt
+          short=$(awk '$1=="commit"{print $2}' dabs-update.txt)
+          [ -n "$short" ] || { echo "no commit in Dab's update.txt"; exit 1; }
+          echo "short=$short" >> "$GITHUB_OUTPUT"
+          built=$(gh release download ps5-dev -R "$GITHUB_REPOSITORY" -p update.txt -O - 2>/dev/null | awk '$1=="commit"{print $2}' || true)
+          echo "built=$built" >> "$GITHUB_OUTPUT"
+          if [ "$built" = "$short" ] && [ "${{ inputs.force }}" != "true" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "ps5-dev already has $short"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.dabs.outputs.skip != 'true'
+
+      - name: Sources
+        if: steps.dabs.outputs.skip != 'true'
+        run: |
+          git clone -q https://github.com/DabDavis/perfect-dark-dabs-mod tmp-dabs
+          full=$(git -C tmp-dabs rev-parse "${{ steps.dabs.outputs.short }}^{commit}")
+          rm -rf tmp-dabs
+          DABS_COMMIT=$full tools/setup-source.sh
+
+      - name: Toolchain cache
+        if: steps.dabs.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            radv/mihawk-vulkan-review/.deps
+            radv/mihawk-vulkan-review/build/host
+            radv/mihawk-vulkan-review/runtime
+            deps/shaderc-ps5
+            .deps/pacbrew
+          key: ps5-toolchain-${{ hashFiles('tools/setup-source.sh', 'tools/build-shaderc.sh', 'tools/setup-pacbrew.sh', 'docker/Dockerfile', 'docker/packages.txt') }}
+
+      - name: Build
+        if: steps.dabs.outputs.skip != 'true'
+        run: |
+          docker build -t pd-ps5-build docker
+          [ -f radv/mihawk-vulkan-review/.deps/native/radv-release/PROVENANCE.txt ] || ./build.sh radv
+          [ -f deps/shaderc-ps5/lib/libshaderc_combined.a ] || ./build.sh shaderc
+          PS5_UPDATE_REPO="https://github.com/$GITHUB_REPOSITORY/releases" ./build.sh configure
+          ./build.sh
+          tools/check-imports.sh
+
+      - name: Package
+        if: steps.dabs.outputs.skip != 'true'
+        run: |
+          short=${{ steps.dabs.outputs.short }}
+          tools/package.sh --release
+          cp build-ps5/pd/pd.x86_64 eboot.bin
+          sha=$(sha256sum eboot.bin | cut -d' ' -f1)
+          size=$(stat -c %s eboot.bin)
+          {
+            echo "version dev-$short"
+            echo "commit $short"
+            echo "build x86_64-ps5 eboot.bin $sha $size"
+          } > update.txt
+          curl -sfL "$DABS_DEV/patchnotes.txt" -o patchnotes.txt || : > patchnotes.txt
+          mv dist/PerfectDark-PS5-*.zip "PerfectEye-PS5-$short.zip"
+          xz -T0 -9 -c build-ps5/pd/pd.x86_64.elf > "eboot.bin.elf-$short.xz"
+          cat update.txt
+
+      - name: Publish ps5-dev
+        if: steps.dabs.outputs.skip != 'true'
+        run: |
+          short=${{ steps.dabs.outputs.short }}
+          notes="PS5 build of Dab's Mod dev build $short, for online play with PC players on the same build. Copy the PPSA64007 folder to /data/homebrew/ and add your own Perfect Dark (USA) (Rev 1) ROM, or update from the game: Check for Updates on the Perfect Menu."
+          git tag -f ps5-dev
+          git push -f origin ps5-dev
+          gh release view ps5-dev >/dev/null 2>&1 ||
+            gh release create ps5-dev --prerelease --title "Perfect Eye PS5 (follows Dab's Mod dev)" --notes "$notes"
+          gh release edit ps5-dev --notes "$notes"
+          old=$(gh release view ps5-dev --json assets -q '.assets[].name' | grep -E '^(PerfectEye-PS5-|eboot.bin.elf-)' || true)
+          gh release upload ps5-dev --clobber eboot.bin update.txt patchnotes.txt "PerfectEye-PS5-$short.zip" "eboot.bin.elf-$short.xz"
+          for a in $old; do
+            case $a in *"$short"*) ;; *) gh release delete-asset ps5-dev "$a" -y ;; esac
+          done

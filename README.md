@@ -22,6 +22,22 @@ build: PC players use the Dab's Mod dev build of that commit.
 
 Everything the game writes (settings in `pd.ini`, saves, the log) stays in that folder.
 
+## What the PS5 build adds
+
+- **120 fps** on a TV that takes the PS5's 120 Hz output (the title declares it in
+  `param.json`). The game's tick rate is uncapped there; `Video.PS5HighFrameRate=0` in
+  `pd.ini` turns that off. On a 60 Hz TV it runs at 60.
+- **Updates from the game:** **Check for Updates** on the Perfect Menu (and a notice there when one is out) fetches the newest
+  PS5 build from this repo's `ps5-dev` release, which follows Dab's Mod's dev builds (see
+  `.github/workflows/follow-dabs-mod.yml`). Quit and start it again from the home screen to run it.
+- **Online without IPv6:** if the console cannot open a dual-stack socket, online play falls back
+  to IPv4 by itself.
+- **Light bars** in each player's colour (blue, red, green, pink), or the team's colour in a team
+  match on one console.
+- **PlayStation button names** (CROSS, CIRCLE, L1, R2, OPTIONS) in the controls menus.
+- **A shader cache** built on a PC (`vulkan-shaders.bin`), so the first visit to each level
+  compiles fewer shaders.
+
 ## HD textures
 
 A texture pack goes in `texture-packs/` in the title folder, as a folder. With no pack chosen the
@@ -46,7 +62,6 @@ code addresses on the stack (match them to `eboot.bin.elf` with `llvm-symbolizer
 
 ## Not on the PS5
 
-- Check for Updates: replace `eboot.bin` over FTP instead.
 - Video recording: use the controller's Create button.
 - The Create and PS buttons belong to the system and do not reach the game.
 
@@ -64,6 +79,7 @@ docker build -t pd-ps5-build docker
 tools/check-imports.sh           # every import comes from a usable system module
 tools/package.sh                 # dist/PPSA64007
 tools/upload.sh                  # PS5_HOST=<ip>:<port> to /data/homebrew over FTP
+tools/gen-shader-cache.sh <dir>  # vulkan-shaders.bin from a Linux build of the same commit
 ```
 
 `patches/dabsmod.patch` is applied to Dab's Mod without committing, so the build keeps

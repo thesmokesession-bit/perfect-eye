@@ -24,7 +24,8 @@ shaderc)
 configure)
     "$root/docker/run.sh" "$env
         cmake -S src-upstream -B build-ps5/pd -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DCMAKE_TOOLCHAIN_FILE=$root/cmake/ps5-toolchain.cmake -DUPDATE_CHANNEL=dev" ;;
+            -DCMAKE_TOOLCHAIN_FILE=$root/cmake/ps5-toolchain.cmake -DUPDATE_CHANNEL=dev \
+            -DPS5_UPDATE_REPO=${PS5_UPDATE_REPO:-}" ;;
 build)
     "$root/docker/run.sh" "$env cmake --build build-ps5/pd -- -k 0" ;;
 *)

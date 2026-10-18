@@ -8,12 +8,14 @@
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 upstream_url=https://github.com/DabDavis/perfect-dark-dabs-mod
-upstream_commit=3ee8ed0cd549b64350848655c43ae1568e449c6d   # dabs-mod-dev, patch notes 66
+# DABS_COMMIT picks another Dab's Mod commit (the release job passes the one its dev build names)
+upstream_commit=${DABS_COMMIT:-3ee8ed0cd549b64350848655c43ae1568e449c6d}   # dabs-mod-dev, patch notes 66
 src="$root/src-upstream"
 if [[ ! -d $src ]]; then
     git clone -q "$upstream_url" "$src"
     git -C "$src" checkout -q "$upstream_commit"
-    git -C "$src" apply "$root/patches/dabsmod.patch"
+    git -C "$src" apply --3way "$root/patches/dabsmod.patch" ||
+        { echo "setup-source.sh: patches/dabsmod.patch does not apply to $upstream_commit" >&2; exit 1; }
 fi
 
 mkdir -p "$root/radv"
