@@ -18,6 +18,8 @@ cp "$build/pd.x86_64" "$app/eboot.bin"
 cp "$root"/sce_sys/{param.json,icon0.png,pic0.dds,pic1.dds} "$app/sce_sys/"
 cp "$radv/runtime/libc.prx" "$app/sce_module/libc.prx"
 cp "$root/assets/cacert.pem" "$app/cacert.pem"
+# SPIR-V the Vulkan renderer would otherwise compile on first sight (tools/gen-shader-cache.sh)
+[[ -f $root/assets/vulkan-shaders.bin ]] && cp "$root/assets/vulkan-shaders.bin" "$app/vulkan-shaders.bin"
 cat > "$app/data/PUT YOUR ROM IN THE TITLE FOLDER.txt" <<'TXT'
 Copy your Perfect Dark (USA) (Rev 1) ROM (.z64, .n64 or .v64, any file name) into the title
 folder or this folder. The game puts it in place as pd.ntsc-final.z64 the first time it starts.
