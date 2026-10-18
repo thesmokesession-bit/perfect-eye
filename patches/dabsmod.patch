@@ -1384,7 +1384,7 @@ index 1907f81fe..ebb17da0d 100644
  	snprintf(g_NoticeTitle, sizeof(g_NoticeTitle), "CONVERTING %s", name);
  	for (char *c = g_NoticeTitle; *c; ++c) {
 diff --git a/port/src/ghostnet.c b/port/src/ghostnet.c
-index ecfb59a65..ac151a290 100644
+index ecfb59a65..139af7d86 100644
 --- a/port/src/ghostnet.c
 +++ b/port/src/ghostnet.c
 @@ -769,6 +769,27 @@ static size_t ghostnetCurlWrite(void *ptr, size_t size, size_t nmemb, void *arg)
@@ -1430,6 +1430,31 @@ index ecfb59a65..ac151a290 100644
  	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, ghostnetCurlWrite);
  	curl_easy_setopt(curl, CURLOPT_WRITEDATA, buf);
  	curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)(req->timeout > 0 ? req->timeout : GHOSTNET_TIMEOUT));
+@@ -878,7 +907,14 @@ bool ghostnetSend(const struct ghostnetreq *req, struct ghostnetbuf *buf,
+ 		curl_slist_free_all(headers);
+ 	}
+ 
++#ifdef PLATFORM_PS5
++	sysLogPrintf(LOG_NOTE, "ghostnet: %s answered %ld (%s), %u bytes", req->url, code, curl_easy_strerror(res),
++			(u32)buf->len);
++#endif
+ 	curl_easy_cleanup(curl);
++#ifdef PLATFORM_PS5
++	sysLogPrintf(LOG_NOTE, "ghostnet: request closed");
++#endif
+ 
+ 	return res == CURLE_OK;
+ }
+@@ -1524,6 +1560,9 @@ static int ghostnetWorker(void *arg)
+ 		snprintf(msg, sizeof(msg), "%s", LANG_N("wrong name or PIN"));
+ 	}
+ 
++#ifdef PLATFORM_PS5
++	sysLogPrintf(LOG_NOTE, "ghostnet: job %d %s: %s", g_Job, ok ? "done" : "failed", msg);
++#endif
+ 	ghostnetSetResult(ok ? GHOSTNET_OK : GHOSTNET_ERROR, msg);
+ 
+ 	return 0;
 diff --git a/port/src/input.c b/port/src/input.c
 index a5e75de49..7a46f8682 100644
 --- a/port/src/input.c
@@ -2781,7 +2806,7 @@ index f51c1b09d..682086544 100644
  
  		snprintf(extra, sizeof(extra), "victim %s%d attacker %s%d hitpart %d flags %d%s%s",
 diff --git a/port/src/net/netlobby.c b/port/src/net/netlobby.c
-index 22cda3709..dc6ac9403 100644
+index 22cda3709..b680c6d78 100644
 --- a/port/src/net/netlobby.c
 +++ b/port/src/net/netlobby.c
 @@ -266,9 +266,12 @@ extern struct menudialogdef g_MpEndscreenSavePlayerMenuDialog;
@@ -2797,7 +2822,30 @@ index 22cda3709..dc6ac9403 100644
  }
  
  static u64 lobbyNowMs(void)
-@@ -3014,6 +3017,58 @@ static s32 lobbySplitEndpoint(const char *ep, char *addr, s32 size, u16 *port)
+@@ -988,7 +991,22 @@ static void lobbyGone(u32 epoch, const char *why)
+ 
+ static void lobbyPlayersFetch(void);
+ 
++static void lobbyRunJobInner(struct lobbyjob *job);
++
++// the console's first online runs: each job the lobby thread takes, and how long it took
+ static void lobbyRunJob(struct lobbyjob *job)
++{
++#ifdef PLATFORM_PS5
++	const u64 t0 = lobbyNowMs();
++	sysLogPrintf(LOG_NOTE, "lobby: job %d starts", job->kind);
++	lobbyRunJobInner(job);
++	sysLogPrintf(LOG_NOTE, "lobby: job %d done in %u ms", job->kind, (u32)(lobbyNowMs() - t0));
++#else
++	lobbyRunJobInner(job);
++#endif
++}
++
++static void lobbyRunJobInner(struct lobbyjob *job)
+ {
+ 	char err[128];
+ 	char msg[200];
+@@ -3014,6 +3032,58 @@ static s32 lobbySplitEndpoint(const char *ep, char *addr, s32 size, u16 *port)
  	return *port ? 0 : -1;
  }
  
@@ -2856,7 +2904,7 @@ index 22cda3709..dc6ac9403 100644
  static void lobbyHostTick(void)
  {
  	s32 i;
-@@ -3109,6 +3164,7 @@ static void lobbyHostTick(void)
+@@ -3109,6 +3179,7 @@ static void lobbyHostTick(void)
  			}
  
  			sysLogPrintf(LOG_NOTE, "lobby: all %d launched player%s connected; starting the match", connected, connected == 1 ? "" : "s");
