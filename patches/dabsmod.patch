@@ -3280,6 +3280,172 @@ index 07a0ae11d..6a2eb9304 100644
  		g_MenuKeyboardPlayer = g_MpPlayerNum;
  		inputClearLastKey();
  		inputClearLastTextChar();
+diff --git a/src/game/mplayer/ingame.c b/src/game/mplayer/ingame.c
+index a3a438de7..11eeafbdb 100644
+--- a/src/game/mplayer/ingame.c
++++ b/src/game/mplayer/ingame.c
+@@ -866,6 +866,148 @@ void mpPushPauseDialog(void)
+ 	}
+ }
+ 
++#ifndef PLATFORM_N64
++/*
++ * Match Summary (Mod.MatchSummary): the first page at a match's end, each
++ * player's own - where they placed, kills, deaths, accuracy (hits over shots,
++ * as the mission end screen counts them), the best streak (the most kills in
++ * one life, playerstats.maxkills) and headshots - and the match's MVP, the
++ * top of the ranking. Continue goes on to the game's own pages.
++ */
++#include <stdio.h>
++#include <string.h>
++#include "config.h"
++
++s32 g_MpMatchSummary = 1;
++
++PD_CONSTRUCTOR static void mpMatchSummaryConfigInit(void)
++{
++	configRegisterInt("Mod.MatchSummary", &g_MpMatchSummary, 0, 1);
++}
++
++static struct playerstats *mpSummaryStats(void)
++{
++	for (s32 i = 0; i < MAX_PLAYERS; i++) {
++		if (g_Vars.players[i] && g_Vars.playerstats[i].mpindex == g_MpPlayerNum) {
++			return &g_Vars.playerstats[i];
++		}
++	}
++
++	return NULL;
++}
++
++static char *mpSummaryNum(char *buf, s32 value, const char *suffix)
++{
++	sprintf(buf, "%d%s\n", value, suffix);
++	return buf;
++}
++
++static char *mpMenuTextSummaryKills(struct menuitem *item)
++{
++	static char buf[16];
++	struct playerstats *ps = mpSummaryStats();
++	return mpSummaryNum(buf, ps ? ps->killcount : 0, "");
++}
++
++static char *mpMenuTextSummaryDeaths(struct menuitem *item)
++{
++	static char buf[16];
++	return mpSummaryNum(buf, g_PlayerConfigsArray[g_MpPlayerNum].base.numdeaths, "");
++}
++
++static char *mpMenuTextSummaryAccuracy(struct menuitem *item)
++{
++	static char buf[16];
++	struct playerstats *ps = mpSummaryStats();
++	s32 shots = ps ? ps->shotcount[SHOTREGION_TOTAL] : 0;
++	s32 hits = ps ? ps->shotcount[SHOTREGION_HEAD] + ps->shotcount[SHOTREGION_BODY] + ps->shotcount[SHOTREGION_LIMB]
++		+ ps->shotcount[SHOTREGION_GUN] + ps->shotcount[SHOTREGION_HAT] : 0;
++
++	if (shots <= 0) {
++		strcpy(buf, "-\n");
++		return buf;
++	}
++
++	return mpSummaryNum(buf, (hits > shots ? shots : hits) * 100 / shots, "%");
++}
++
++static char *mpMenuTextSummaryStreak(struct menuitem *item)
++{
++	static char buf[16];
++	struct playerstats *ps = mpSummaryStats();
++	return mpSummaryNum(buf, ps ? ps->maxkills : 0, "");
++}
++
++static char *mpMenuTextSummaryHeadshots(struct menuitem *item)
++{
++	static char buf[16];
++	struct playerstats *ps = mpSummaryStats();
++	return mpSummaryNum(buf, ps ? ps->shotcount[SHOTREGION_HEAD] : 0, "");
++}
++
++static char *mpMenuTextSummaryMvp(struct menuitem *item)
++{
++	static char buf[40];
++	struct ranking rankings[MAX_MPCHRS];
++	const s32 n = mpGetPlayerRankings(rankings);
++	char *p;
++
++	if (n <= 0 || !rankings[0].mpchr) {
++		strcpy(buf, "-\n");
++		return buf;
++	}
++
++	snprintf(buf, sizeof(buf), "%.15s", rankings[0].mpchr->name);
++
++	for (p = buf; *p; p++) {
++		if (*p == '\n') {
++			*p = '\0';
++			break;
++		}
++	}
++
++	strcat(buf, "\n");
++
++	return buf;
++}
++
++// A label's two texts are both function pointers or both literal strings
++// (menu.c measures a literal label's right text as a string), so the left
++// ones are functions too
++#define SUMMARY_LABEL(name, text) static char *name(struct menuitem *item) { return text; }
++SUMMARY_LABEL(mpSummaryLblPlaced, "Placed\n")
++SUMMARY_LABEL(mpSummaryLblKills, "Kills\n")
++SUMMARY_LABEL(mpSummaryLblDeaths, "Deaths\n")
++SUMMARY_LABEL(mpSummaryLblAccuracy, "Accuracy\n")
++SUMMARY_LABEL(mpSummaryLblStreak, "Best Streak\n")
++SUMMARY_LABEL(mpSummaryLblHeadshots, "Headshots\n")
++SUMMARY_LABEL(mpSummaryLblMvp, "MVP\n")
++
++#define SUMMARY_ROW(label, fn) { MENUITEMTYPE_LABEL, 0, MENUITEMFLAG_LESSLEFTPADDING, (uintptr_t)&label, (uintptr_t)&fn, NULL }
++
++static struct menuitem g_MpEndscreenSummaryMenuItems[] = {
++	SUMMARY_ROW(mpSummaryLblPlaced, mpMenuTextPlacementWithSuffix),
++	SUMMARY_ROW(mpSummaryLblKills, mpMenuTextSummaryKills),
++	SUMMARY_ROW(mpSummaryLblDeaths, mpMenuTextSummaryDeaths),
++	SUMMARY_ROW(mpSummaryLblAccuracy, mpMenuTextSummaryAccuracy),
++	SUMMARY_ROW(mpSummaryLblStreak, mpMenuTextSummaryStreak),
++	SUMMARY_ROW(mpSummaryLblHeadshots, mpMenuTextSummaryHeadshots),
++	{ MENUITEMTYPE_SEPARATOR, 0, 0, 0, 0, NULL },
++	SUMMARY_ROW(mpSummaryLblMvp, mpMenuTextSummaryMvp),
++	{ MENUITEMTYPE_SELECTABLE, 0, MENUITEMFLAG_SELECTABLE_CLOSESDIALOG | MENUITEMFLAG_LITERAL_TEXT, (uintptr_t)"Continue\n", 0, NULL },
++	{ MENUITEMTYPE_END },
++};
++
++struct menudialogdef g_MpEndscreenSummaryMenuDialog = {
++	MENUDIALOGTYPE_DEFAULT,
++	(uintptr_t)"Match Summary",
++	g_MpEndscreenSummaryMenuItems,
++	NULL,
++	MENUDIALOGFLAG_LITERAL_TEXT,
++	NULL,
++};
++#endif
++
+ void mpPushEndscreenDialog(u32 arg0, u32 playernum)
+ {
+ 	u32 prevplayernum = g_MpPlayerNum;
+@@ -889,6 +1031,12 @@ void mpPushEndscreenDialog(u32 arg0, u32 playernum)
+ 		menuPushRootDialog(&g_MpEndscreenIndGameOverMenuDialog, MENUROOT_MPENDSCREEN);
+ 	}
+ 
++#ifndef PLATFORM_N64
++	if (g_MpMatchSummary && g_BossFile.locktype != MPLOCKTYPE_CHALLENGE) {
++		menuPushDialog(&g_MpEndscreenSummaryMenuDialog);
++	}
++#endif
++
+ #if VERSION >= VERSION_NTSC_1_0
+ #if VERSION >= VERSION_JPN_FINAL
+ 	if (IS8MB())
 diff --git a/src/game/player.c b/src/game/player.c
 index f0fd89d7a..2b41d9cec 100644
 --- a/src/game/player.c

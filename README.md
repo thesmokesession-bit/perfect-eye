@@ -109,6 +109,9 @@ for the Xbox 360 release's models, which need that release in `added-content/`.
   camera found near them (live, not a recording). **Hit markers** flash an X at the crosshair
   when a shot lands, red for the kill, and the **kill feed** (Killer [Weapon] Victim) runs at the
   top right. `Mod.KillCam` (-1 online only, 0 off, 1 every match), `Mod.HitMarkers`, `Mod.KillFeed`.
+  Every match ends on a **Match Summary**: where you placed, kills, deaths, accuracy, best streak
+  (most kills in one life), headshots and the match's MVP, before the game's own pages
+  (`Mod.MatchSummary`).
   Hosting works without opening ports; forwarding **UDP 27100** to the PS5 makes joins direct.
 
 ## When something goes wrong
