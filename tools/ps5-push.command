@@ -40,6 +40,14 @@ put() {
 curl -sS --connect-timeout 5 "ftp://$host/" -o /dev/null ||
     { echo "cannot reach the PS5's FTP server at $host (wrong address in $hostfile?)"; exit 1; }
 
+# Files the PS5 does not have at all go up in batches over one connection (a
+# texture pack is thousands of small files); a replacement goes through put()
+batch=()
+flush() {
+    [ ${#batch[@]} -eq 0 ] || curl -sS --ftp-create-dirs "${batch[@]}" || { echo "failed sending a batch"; exit 1; }
+    batch=()
+}
+
 sent=0 kept=0
 find $titles -type d | sort > "$tmp/dirs"
 while IFS= read -r d; do
@@ -51,11 +59,17 @@ while IFS= read -r d; do
         if echo "$f" | grep -Eq "$never"; then continue; fi
         if echo "$f" | grep -Eq "$always" || ! grep -qxF "$(wc -c < "$f" | tr -d ' ')	$(basename "$f")" "$tmp/remote"; then
             echo "  $f"
-            put "$f" || { echo "failed: $f"; exit 1; }
+            if cut -f2 "$tmp/remote" | grep -qxF "$(basename "$f")"; then
+                put "$f" || { echo "failed: $f"; exit 1; }
+            else
+                batch+=(-T "$f" "$(url "$f")")
+                [ ${#batch[@]} -lt 120 ] || flush
+            fi
             sent=$((sent + 1))
         else
             kept=$((kept + 1))
         fi
     done < "$tmp/files"
+    flush
 done < "$tmp/dirs"
 echo "Sent $sent file(s) to the PS5 at $host ($kept already there). Start Perfect Dark from the home screen."
