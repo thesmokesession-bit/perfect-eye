@@ -4590,6 +4590,23 @@ index 07a0ae11d..6a2eb9304 100644
  		g_MenuKeyboardPlayer = g_MpPlayerNum;
  		inputClearLastKey();
  		inputClearLastTextChar();
+diff --git a/src/game/menutick.c b/src/game/menutick.c
+index 3657861d0..7b1c30825 100644
+--- a/src/game/menutick.c
++++ b/src/game/menutick.c
+@@ -465,7 +465,12 @@ void menuTick(void)
+ 	if (g_FileState == FILESTATE_UNSELECTED && g_Vars.stagenum == STAGE_CITRAINING) {
+ 		g_PlayersWithControl[0] = false;
+ 
++#ifndef PLATFORM_N64
++		// (the GoldenEye tile's start, which shows none of it, does not wait the half second)
++		if ((g_Vars.lvframenum > 30 || (gexFrontTileBooting() && g_Vars.lvframenum > 1)) && g_Vars.tickmode != TICKMODE_CUTSCENE) {
++#else
+ 		if (g_Vars.lvframenum > 30 && g_Vars.tickmode != TICKMODE_CUTSCENE) {
++#endif
+ 			g_Menus[0].openinhibit = 0;
+ 			g_Menus[1].openinhibit = 0;
+ 			g_Menus[2].openinhibit = 0;
 diff --git a/src/game/mplayer/ingame.c b/src/game/mplayer/ingame.c
 index a3a438de7..11eeafbdb 100644
 --- a/src/game/mplayer/ingame.c
@@ -4774,10 +4791,29 @@ index 1848e846c..8db8bf79d 100644
  		g_MusicEventQueue[g_MusicEventQueueLength].tracktype = tracktype;
  		g_MusicEventQueue[g_MusicEventQueueLength].tracknum = tracknum;
 diff --git a/src/game/player.c b/src/game/player.c
-index f0fd89d7a..2b41d9cec 100644
+index f0fd89d7a..702ff2b1c 100644
 --- a/src/game/player.c
 +++ b/src/game/player.c
-@@ -6483,6 +6483,10 @@ void playerTick(bool arg0)
+@@ -3070,10 +3070,17 @@ void playerTickCutscene(bool arg0)
+ 	// --skip-cutscenes: START held for a headless run
+ 	{
+ 		extern s32 g_SkipCutscenes;
++		s32 gexFrontTileBooting(void);
+ 
+-		if (arg0 && g_SkipCutscenes) {
++		// and the GoldenEye tile's start, which shows none of the Institute's opening
++		if (arg0 && (g_SkipCutscenes || gexFrontTileBooting())) {
+ 			buttons |= START_BUTTON;
+ 		}
++
++		// at once on the tile, not after the half second a held button waits
++		if (arg0 && gexFrontTileBooting() && g_CutsceneCurTotalFrame60f <= 30) {
++			g_CutsceneCurTotalFrame60f = 31;
++		}
+ 	}
+ #endif
+ 
+@@ -6483,6 +6490,10 @@ void playerTick(bool arg0)
  		if (g_Vars.currentplayer->isdead
  				&& geDeathCamCamera(&spf4, &camup, &camlook, &deathcamhint, deathcamrooms)) {
  			player0f0c1840(&spf4, &camup, &camlook, &deathcamhint, deathcamrooms);
