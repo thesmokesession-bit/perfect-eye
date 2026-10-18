@@ -77,11 +77,16 @@ while IFS= read -r d; do
     done < "$tmp/files"
     flush
 done < "$tmp/dirs"
-# The home screen draws a title's art from its own copy in /user/appmeta, made when the title was
-# installed: new art in sce_sys shows only once that copy is replaced too (and the PS5 restarted)
+# The home screen draws a title's art from the copies made when the title was installed
+# (/user/app/<title>/icon0.png and sce_sys, /user/appmeta/<title>): new art in sce_sys shows only
+# once those are replaced too (and the PS5 restarted)
 for t in $titles; do
     for f in icon0.png pic0.dds pic1.dds; do
-        [ -f "$t/sce_sys/$f" ] && put_abs "$t/sce_sys/$f" "/user/appmeta/$t/$f" || echo "  (could not refresh $t's $f on the home screen)"
+        [ -f "$t/sce_sys/$f" ] || continue
+        for d in "/user/appmeta/$t" "/user/app/$t/sce_sys"; do
+            put_abs "$t/sce_sys/$f" "$d/$f" || echo "  (could not refresh $d/$f)"
+        done
     done
+    [ -f "$t/sce_sys/icon0.png" ] && { put_abs "$t/sce_sys/icon0.png" "/user/app/$t/icon0.png" || echo "  (could not refresh /user/app/$t/icon0.png)"; }
 done
 echo "Sent $sent file(s) to the PS5 at $host ($kept already there). Start Perfect Dark from the home screen."

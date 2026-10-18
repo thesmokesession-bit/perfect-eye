@@ -720,6 +720,23 @@ static void stack_scan(const char *who)
 	}
 }
 
+/* A line in the watch file now (open, write, close: kept if the title dies the next instant), and
+ * the frames after it traced too (gfx_pc.cpp, gfx_vulkan.cpp): where a death no signal reports
+ * (a GPU fault ends the process outright) happened, by the last line written */
+volatile int ps5_trace_frames;
+void ps5Trace(int frames, const char *fmt, ...)
+{
+	char line[256];
+	va_list args;
+	va_start(args, fmt);
+	vsnprintf(line, sizeof(line), fmt, args);
+	va_end(args);
+	watch_printf("[frame %u, present %u] %s\n", ps5_frames_started, ps5_presents, line);
+	if (frames > ps5_trace_frames) {
+		ps5_trace_frames = frames;
+	}
+}
+
 void ps5LastWords(const char *fmt, ...)
 {
 	char line[512];
