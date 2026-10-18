@@ -758,7 +758,7 @@ index ecfb59a65..53a2a6281 100644
  	curl_easy_setopt(curl, CURLOPT_WRITEDATA, buf);
  	curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)(req->timeout > 0 ? req->timeout : GHOSTNET_TIMEOUT));
 diff --git a/port/src/input.c b/port/src/input.c
-index a5e75de49..b19be8c59 100644
+index a5e75de49..7c9ec6670 100644
 --- a/port/src/input.c
 +++ b/port/src/input.c
 @@ -13,6 +13,14 @@
@@ -896,7 +896,7 @@ index a5e75de49..b19be8c59 100644
  static const char *ckNames[CK_TOTAL_COUNT] = {
  	"R_CBUTTONS",
  	"L_CBUTTONS",
-@@ -1368,12 +1489,319 @@ static inline void inputUpdateMouse(void)
+@@ -1368,12 +1489,479 @@ static inline void inputUpdateMouse(void)
  	}
  }
  
@@ -1200,6 +1200,165 @@ index a5e75de49..b19be8c59 100644
 +}
 +#endif
 +
++#ifdef PLATFORM_PS5/**
++ * A USB keyboard and mouse. SDL's PS5 video driver reads the keyboard, but the
++ * game runs SDL's offscreen driver (the Vulkan renderer owns the display), so
++ * both are read here and handed to SDL as if its own driver had seen them:
++ * SDL_GetKeyboardState, SDL_GetRelativeMouseState and the key and button
++ * events then carry them to the game's bindings and mouselook unchanged.
++ * libSceKeyboard is already imported (SDL links it). libSceMouse is not in the
++ * SDK, so it is loaded at run time and the mouse is skipped if it is not there.
++ * The layouts are PacBrew SDL's keyboard_state_t and the PS4 SDK's SceMouseData.
++ */
++typedef struct {
++	u64 junk0[2];
++	u8 available;
++	u32 junk1[2];
++	u32 modifiers;
++	u16 scankey[16];
++	u64 junk3[4];
++} Ps5KeyboardState;
++
++typedef struct {
++	u64 timestamp;
++	u8 connected;
++	u32 buttons;
++	s32 x, y, wheel, tilt;
++	u8 reserve[8];
++} Ps5MouseData;
++
++int sceKeyboardInit(void);
++int sceKeyboardOpen(int user, int type, int index, void *param);
++int sceKeyboardReadState(int handle, Ps5KeyboardState *state);
++int sceUserServiceGetForegroundUser(int *user);
++int sceKernelLoadStartModule(const char *path, size_t args, const void *argp, u32 flags, const void *opt, int *res);
++int sceKernelDlsym(int module, const char *name, void **addr);
++int SDL_SendKeyboardKey(Uint8 state, SDL_Scancode scancode);
++void SDL_SetKeyboardFocus(SDL_Window *window);
++void SDL_SetMouseFocus(SDL_Window *window);
++int SDL_SendMouseMotion(SDL_Window *window, Uint32 mouseID, int relative, int x, int y);
++int SDL_SendMouseButton(SDL_Window *window, Uint32 mouseID, Uint8 state, Uint8 button);
++int SDL_SendMouseWheel(SDL_Window *window, Uint32 mouseID, float x, float y, SDL_MouseWheelDirection direction);
++
++static int (*ps5MouseInit)(void);
++static int (*ps5MouseOpen)(int user, int type, int index, void *param);
++static int (*ps5MouseRead)(int handle, Ps5MouseData *data, int num);
++
++static void inputPs5UpdateKeyboardMouse(void)
++{
++	static s32 started, kbd = -1, mouse = -1, retry;
++	static Ps5KeyboardState prev;
++	static u32 prevButtons;
++	SDL_Window *wnd = videoGetWindowHandle();
++	int user = -1;
++
++	if (!wnd) {
++		return;
++	}
++
++	if (!started) {
++		started = 1;
++		SDL_SetKeyboardFocus(wnd);
++		SDL_SetMouseFocus(wnd);
++		sceKeyboardInit(); // SDL's driver may have already: an error then is fine
++
++		static const char *const paths[] = { "/system/common/lib/libSceMouse.sprx", "/system/priv/lib/libSceMouse.sprx" };
++		for (s32 i = 0; i < 2 && !ps5MouseRead; i++) {
++			const int m = sceKernelLoadStartModule(paths[i], 0, NULL, 0, NULL, NULL);
++			if (m >= 0 && sceKernelDlsym(m, "sceMouseInit", (void **)&ps5MouseInit) == 0
++					&& sceKernelDlsym(m, "sceMouseOpen", (void **)&ps5MouseOpen) == 0
++					&& sceKernelDlsym(m, "sceMouseRead", (void **)&ps5MouseRead) == 0) {
++				ps5MouseInit();
++			} else {
++				ps5MouseRead = NULL;
++			}
++			sysLogPrintf(LOG_NOTE, "input: %s: 0x%08x%s", paths[i], (u32)m, ps5MouseRead ? ", mouse ready" : "");
++		}
++	}
++
++	// a keyboard or mouse plugged in later, or one the first try missed: once a second
++	if ((kbd < 0 || (ps5MouseRead && mouse < 0)) && retry-- <= 0) {
++		retry = 60;
++		if (sceUserServiceGetForegroundUser(&user) == 0) {
++			if (kbd < 0 && (kbd = sceKeyboardOpen(user, 0, 0, NULL)) >= 0) {
++				sysLogPrintf(LOG_NOTE, "input: keyboard open (%d)", kbd);
++			}
++			if (ps5MouseRead && mouse < 0 && (mouse = ps5MouseOpen(user, 0, 0, NULL)) >= 0) {
++				sysLogPrintf(LOG_NOTE, "input: mouse open (%d)", mouse);
++			}
++		}
++	}
++
++	if (kbd >= 0) {
++		Ps5KeyboardState cur;
++
++		memset(&cur, 0, sizeof(cur));
++
++		if (sceKeyboardReadState(kbd, &cur) == 0 && cur.available) {
++			static const SDL_Scancode mods[8] = {
++				SDL_SCANCODE_LCTRL, SDL_SCANCODE_LSHIFT, SDL_SCANCODE_LALT, SDL_SCANCODE_LGUI,
++				SDL_SCANCODE_RCTRL, SDL_SCANCODE_RSHIFT, SDL_SCANCODE_RALT, SDL_SCANCODE_RGUI,
++			};
++
++			for (s32 b = 0; b < 8; b++) {
++				if ((cur.modifiers ^ prev.modifiers) & (1u << b)) {
++					SDL_SendKeyboardKey((cur.modifiers & (1u << b)) ? SDL_PRESSED : SDL_RELEASED, mods[b]);
++				}
++			}
++
++			// the keys held are a set, in whatever slots: released what left it, pressed what joined
++			for (s32 i = 0; i < 16; i++) {
++				s32 still = 0, was = 0;
++
++				for (s32 j = 0; j < 16; j++) {
++					still |= prev.scankey[i] && cur.scankey[j] == prev.scankey[i];
++					was |= cur.scankey[i] && prev.scankey[j] == cur.scankey[i];
++				}
++
++				if (prev.scankey[i] && !still && prev.scankey[i] < SDL_NUM_SCANCODES) {
++					SDL_SendKeyboardKey(SDL_RELEASED, (SDL_Scancode)prev.scankey[i]);
++				}
++				if (cur.scankey[i] && !was && cur.scankey[i] < SDL_NUM_SCANCODES) {
++					SDL_SendKeyboardKey(SDL_PRESSED, (SDL_Scancode)cur.scankey[i]);
++				}
++			}
++
++			prev = cur;
++		}
++	}
++
++	if (mouse >= 0) {
++		Ps5MouseData data[8];
++		const int n = ps5MouseRead(mouse, data, 8);
++		s32 dx = 0, dy = 0, wheel = 0;
++
++		for (s32 i = 0; i < n; i++) {
++			dx += data[i].x;
++			dy += data[i].y;
++			wheel += data[i].wheel;
++		}
++
++		if (n > 0) {
++			static const Uint8 buttons[5] = { SDL_BUTTON_LEFT, SDL_BUTTON_RIGHT, SDL_BUTTON_MIDDLE, SDL_BUTTON_X1, SDL_BUTTON_X2 };
++			const u32 now = data[n - 1].buttons;
++
++			if (dx || dy) {
++				SDL_SendMouseMotion(wnd, 0, 1, dx, dy);
++			}
++			if (wheel) {
++				SDL_SendMouseWheel(wnd, 0, 0.f, (float)wheel, SDL_MOUSEWHEEL_NORMAL);
++			}
++			for (s32 b = 0; b < 5; b++) {
++				if ((now ^ prevButtons) & (1u << b)) {
++					SDL_SendMouseButton(wnd, 0, (now & (1u << b)) ? SDL_PRESSED : SDL_RELEASED, buttons[b]);
++				}
++			}
++			prevButtons = now;
++		}
++	}
++}
++#endif
++
  void inputUpdate(void)
  {
  	if (g_NetDedicated) return;
@@ -1208,6 +1367,7 @@ index a5e75de49..b19be8c59 100644
  
 +#ifdef PLATFORM_PS5
 +	inputPs5UpdateLightBars();
++	inputPs5UpdateKeyboardMouse();
 +	inputPs5UpdateGyro();
 +	inputPs5UpdateTriggers();
 +	inputPs5ImeUpdate();
@@ -1216,7 +1376,7 @@ index a5e75de49..b19be8c59 100644
  	if (mouseEnabled) {
  		inputUpdateMouse();
  	}
-@@ -1795,6 +2223,12 @@ void inputMouseGetScaledDelta(f32* dx, f32* dy)
+@@ -1795,6 +2383,12 @@ void inputMouseGetScaledDelta(f32* dx, f32* dy)
  		mdx = rawdx * (0.022f / 3.5f) * mouseSensX;
  		mdy = rawdy * (0.022f / 3.5f) * mouseSensY;
  	}
@@ -1229,7 +1389,7 @@ index a5e75de49..b19be8c59 100644
  	if (dx) *dx = mdx;
  	if (dy) *dy = mdy;
  }
-@@ -1908,6 +2342,35 @@ const char *inputGetKeyName(s32 vk)
+@@ -1908,6 +2502,35 @@ const char *inputGetKeyName(s32 vk)
  	return vkNames[vk];
  }
  
@@ -1265,7 +1425,7 @@ index a5e75de49..b19be8c59 100644
  s32 inputGetKeyByName(const char *name)
  {
  	s32 start = 0;
-@@ -1949,6 +2412,13 @@ void inputClearLastKey(void)
+@@ -1949,6 +2572,13 @@ void inputClearLastKey(void)
  
  s32 inputGetLastKey(void)
  {
@@ -1279,7 +1439,7 @@ index a5e75de49..b19be8c59 100644
  	return lastKey;
  }
  
-@@ -1958,6 +2428,10 @@ void inputStartTextInput(void)
+@@ -1958,6 +2588,10 @@ void inputStartTextInput(void)
  	lastKey = 0;
  	textInput = 1;
  	SDL_StartTextInput();
@@ -1290,7 +1450,7 @@ index a5e75de49..b19be8c59 100644
  }
  
  /**
-@@ -2069,6 +2543,14 @@ const char *inputGetClipboard(void)
+@@ -2069,6 +2703,14 @@ const char *inputGetClipboard(void)
  void inputStopTextInput(void)
  {
  	SDL_StopTextInput();
@@ -1305,7 +1465,7 @@ index a5e75de49..b19be8c59 100644
  
  	if (textInput) {
  		const u8 *state = SDL_GetKeyboardState(NULL);
-@@ -2099,6 +2581,11 @@ u32 inputGetKeyModState(void)
+@@ -2099,6 +2741,11 @@ u32 inputGetKeyModState(void)
  PD_CONSTRUCTOR static void inputConfigInit(void)
  {
  	configRegisterInt("Input.MouseEnabled", &mouseEnabled, 0, 1);

@@ -57,6 +57,10 @@ Everything the game writes (settings in `pd.ini`, saves, the log) stays in that 
   Simulator maps straight into `mods/`, where the game unpacks and imports them as usual. The
   list is `assets/mod-catalogue.txt` in this repo (one mod a line), which the game reads from the
   `ps5-dev` release, so a mod added there reaches every console without a new build.
+- **USB keyboard and mouse:** plug them into the console for PC-style controls and mouselook,
+  with the PC version's key bindings (Extended Options → Mouse and the controls pages). The
+  keyboard goes through the PS5's keyboard library. The mouse library is not in the SDK, so the
+  game loads it when it starts; `pd.log` says whether it found it (`input: ... mouse ready`).
 - **The PS5's keyboard** opens for every text field: the online name and PIN, chat and the
   menus' keyboard.
 - **A GoldenEye tile:** `PPSA64008` is the same game installed as a second title that opens
