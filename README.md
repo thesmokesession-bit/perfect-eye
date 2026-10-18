@@ -112,6 +112,10 @@ for the Xbox 360 release's models, which need that release in `added-content/`.
   Every match ends on a **Match Summary**: where you placed, kills, deaths, accuracy, best streak
   (most kills in one life), headshots and the match's MVP, before the game's own pages
   (`Mod.MatchSummary`).
+  **Bots Fill Online Rooms** (PS5 Settings, `Net.BotBackfill`, off by default): a room you host
+  starts each match with simulants in the seats no player took, beside your own simulants (up to
+  eight in all). Each match counts again, so a player who joins the room between matches takes a
+  bot's place; someone joining a match in progress plays beside the bots until it ends.
   Hosting works without opening ports; forwarding **UDP 27100** to the PS5 makes joins direct.
 
 ## When something goes wrong

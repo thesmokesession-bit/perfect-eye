@@ -2399,6 +2399,90 @@ index f51c1b09d..682086544 100644
  		}
  
  		snprintf(extra, sizeof(extra), "victim %s%d attacker %s%d hitpart %d flags %d%s%s",
+diff --git a/port/src/net/netlobby.c b/port/src/net/netlobby.c
+index 22cda3709..dc6ac9403 100644
+--- a/port/src/net/netlobby.c
++++ b/port/src/net/netlobby.c
+@@ -266,9 +266,12 @@ extern struct menudialogdef g_MpEndscreenSavePlayerMenuDialog;
+ extern s32 g_StageNum;
+ extern s32 g_MainChangeToStageNum;
+ 
++extern s32 g_NetBotBackfill;
++
+ PD_CONSTRUCTOR static void netLobbyConfigInit(void)
+ {
+ 	configRegisterString("Net.LobbyServer", s_LobbyUrl, sizeof(s_LobbyUrl) - 1);
++	configRegisterInt("Net.BotBackfill", &g_NetBotBackfill, 0, 1);
+ }
+ 
+ static u64 lobbyNowMs(void)
+@@ -3014,6 +3017,58 @@ static s32 lobbySplitEndpoint(const char *ep, char *addr, s32 size, u16 *port)
+ 	return *port ? 0 : -1;
+ }
+ 
++/*
++ * Bot backfill (Net.BotBackfill, off unless turned on): at each launch of a
++ * Combat Simulator room, simulants for the seats no player took - the room's
++ * size less the players who connected, up to the cartridge's eight
++ * simulants in all - beside the host's own. Each launch first takes the last
++ * one's back out, so a player who joins the room between matches has their
++ * seat back from a bot at the next one. Someone joining a match in progress
++ * plays beside the bots until it ends.
++ */
++s32 g_NetBotBackfill = 0;
++static u8 s_Backfilled[MAX_BOTS];
++
++static void lobbyBackfill(s32 humans)
++{
++	s32 want, added = 0;
++
++	for (s32 i = 0; i < MAX_BOTS; i++) {
++		if (s_Backfilled[i]) {
++			s_Backfilled[i] = 0;
++
++			if (mpIsSimSlotOn(i)) {
++				mpRemoveSimulant(i);
++			}
++		}
++	}
++
++	if (!g_NetBotBackfill || g_NetCoopSetup.on) {
++		return;
++	}
++
++	want = s_Room.sum.maxhumans - humans;
++
++	if (want > MAX_BOTS_CONFIG - mpGetNumSimSlotsOn()) {
++		want = MAX_BOTS_CONFIG - mpGetNumSimSlotsOn();
++	}
++
++	for (s32 i = 0; i < MAX_BOTS && added < want; i++) {
++		if (!mpIsSimSlotOn(i)) {
++			mpCreateBotFromProfile(i, 2); // NormalSim
++			s_Backfilled[i] = 1;
++			added++;
++		}
++	}
++
++	if (added > 0) {
++		mpGenerateBotNames();
++	}
++
++	sysLogPrintf(LOG_NOTE, "lobby: bot backfill: %d player%s in a room for %d, %d simulant%s added", humans,
++			humans == 1 ? "" : "s", s_Room.sum.maxhumans, added, added == 1 ? "" : "s");
++}
++
+ static void lobbyHostTick(void)
+ {
+ 	s32 i;
+@@ -3109,6 +3164,7 @@ static void lobbyHostTick(void)
+ 			}
+ 
+ 			sysLogPrintf(LOG_NOTE, "lobby: all %d launched player%s connected; starting the match", connected, connected == 1 ? "" : "s");
++			lobbyBackfill(connected + 1); // the host plays too
+ 			netSessionLobbyStartMatch();
+ 		}
+ 	}
 diff --git a/port/src/net/nettransport.c b/port/src/net/nettransport.c
 index 3842267e4..79d52900f 100644
 --- a/port/src/net/nettransport.c
@@ -2579,7 +2663,7 @@ index c927e5ead..69ae77145 100644
  	} else {
  		snprintf(tail, sizeof(tail), " (1/%d)", s_Create.maxhumans);
 diff --git a/port/src/optionsmenu.c b/port/src/optionsmenu.c
-index 76cceaa09..49178b997 100644
+index 76cceaa09..c30bc93be 100644
 --- a/port/src/optionsmenu.c
 +++ b/port/src/optionsmenu.c
 @@ -2620,7 +2620,7 @@ static MenuItemHandlerResult menuhandlerBind(s32 operation, struct menuitem *ite
@@ -2609,7 +2693,7 @@ index 76cceaa09..49178b997 100644
  			keyname[sizeof(keyname) - 1] = '\0';
  			for (char *p = keyname; *p; ++p) {
  				if (*p == '_') *p = ' ';
-@@ -7928,7 +7928,179 @@ struct menudialogdef g_ExtendedAdvancedMenuDialog = {
+@@ -7928,7 +7928,202 @@ struct menudialogdef g_ExtendedAdvancedMenuDialog = {
  	NULL,
  };
  
@@ -2690,6 +2774,21 @@ index 76cceaa09..49178b997 100644
 +	return 0;
 +}
 +
++extern s32 g_NetBotBackfill; // netlobby.c
++
++static MenuItemHandlerResult menuhandlerPs5Backfill(s32 operation, struct menuitem *item, union handlerdata *data)
++{
++	switch (operation) {
++	case MENUOP_GET:
++		return g_NetBotBackfill;
++	case MENUOP_SET:
++		g_NetBotBackfill = data->checkbox.value;
++		break;
++	}
++
++	return 0;
++}
++
 +static MenuDialogHandlerResult menudialogPs5Setup(s32 operation, struct menudialogdef *dialogdef, union handlerdata *data)
 +{
 +	if (operation == MENUOP_CLOSE && !g_Ps5SetupDone) {
@@ -2748,6 +2847,14 @@ index 76cceaa09..49178b997 100644
 +		(uintptr_t)"Adaptive Triggers",
 +		0,
 +		menuhandlerPs5Triggers,
++	},
++	{
++		MENUITEMTYPE_CHECKBOX,
++		0,
++		MENUITEMFLAG_LITERAL_TEXT,
++		(uintptr_t)"Bots Fill Online Rooms",
++		0,
++		menuhandlerPs5Backfill,
 +	},
 +	{
 +		MENUITEMTYPE_SELECTABLE,
