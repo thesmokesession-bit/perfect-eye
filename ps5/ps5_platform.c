@@ -147,8 +147,23 @@ void ps5PlatformInit(int *argc, const char ***argv)
 
 	/* The arguments a title cannot be given: everything in the title folder, Vulkan only
 	 * (there is no OpenGL to fall back to), then whatever the launcher passed. */
-	static const char *defaults[] = { "--portable", "--vulkan" };
-	const int ndefaults = (int)(sizeof(defaults) / sizeof(defaults[0]));
+	static const char *defaults[] = { "--portable", "--vulkan", NULL };
+	int ndefaults = 2;
+
+	/* The GoldenEye tile is the same game installed as a second title (PPSA64008),
+	 * which opens GoldenEye as soon as the Perfect Menu is up. */
+	{
+		char json[8192] = { 0 };
+		FILE *f = fopen("/app0/sce_sys/param.json", "rb");
+		if (f) {
+			fread(json, 1, sizeof(json) - 1, f);
+			fclose(f);
+		}
+		if (strstr(json, "\"PPSA64008\"")) {
+			defaults[ndefaults++] = "--ps5-goldeneye";
+			printf("PS5: GoldenEye tile\n");
+		}
+	}
 	const int n = *argc > 0 ? *argc : 1;
 	const char **args = calloc((size_t)(n + ndefaults + 1), sizeof(*args));
 	if (!args) {

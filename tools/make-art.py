@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf"
 out = Path(sys.argv[1])
 
-def art(w, h, title_size, sub_size, sub="PS5"):
+def art(w, h, title_size, sub_size, sub="PS5", lines=("PERFECT", "DARK"), slash=(235, 40, 45), glowc=(200, 20, 30, 255)):
     img = Image.new("RGB", (w, h), (8, 10, 16))
     d = ImageDraw.Draw(img)
     # a cold vertical gradient
@@ -18,12 +18,11 @@ def art(w, h, title_size, sub_size, sub="PS5"):
     # a red slash across the lower third, blurred into a glow
     glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     g = ImageDraw.Draw(glow)
-    g.polygon([(0, h * 0.70), (w, h * 0.52), (w, h * 0.58), (0, h * 0.76)], fill=(200, 20, 30, 255))
+    g.polygon([(0, h * 0.70), (w, h * 0.52), (w, h * 0.58), (0, h * 0.76)], fill=glowc)
     img.paste(glow.filter(ImageFilter.GaussianBlur(w / 60)), (0, 0), glow.filter(ImageFilter.GaussianBlur(w / 60)))
-    d.polygon([(0, h * 0.72), (w, h * 0.54), (w, h * 0.555), (0, h * 0.735)], fill=(235, 40, 45))
+    d.polygon([(0, h * 0.72), (w, h * 0.54), (w, h * 0.555), (0, h * 0.735)], fill=slash)
     f = ImageFont.truetype(FONT, title_size)
     s = ImageFont.truetype(FONT, sub_size)
-    lines = ["PERFECT", "DARK"]
     y = h * 0.16
     for line in lines:
         tw = d.textlength(line, font=f)
@@ -36,3 +35,6 @@ def art(w, h, title_size, sub_size, sub="PS5"):
 out.mkdir(parents=True, exist_ok=True)
 art(1024, 1024, 190, 70).save(out / "icon.png")
 art(1920, 1080, 210, 60, "DAB'S MOD  ·  PS5").save(out / "background.png")
+gold = dict(lines=("GOLDEN", "EYE"), slash=(230, 180, 40), glowc=(200, 150, 20, 255))
+art(1024, 1024, 210, 70, **gold).save(out / "icon-ge.png")
+art(1920, 1080, 230, 60, "INSIDE PERFECT DARK  ·  PS5", **gold).save(out / "background-ge.png")

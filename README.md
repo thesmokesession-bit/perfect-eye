@@ -12,7 +12,8 @@ build: PC players use the Dab's Mod dev build of that commit.
 
 ## Installing
 
-1. Copy the `PPSA64007` folder to `/data/homebrew/` on the console over FTP.
+1. Copy the `PPSA64007` folder (and `PPSA64008` for the GoldenEye tile) to `/data/homebrew/` on
+   the console over FTP.
 2. Put your **Perfect Dark (USA) (Rev 1)** ROM in that folder. Any file name, `.z64`, `.n64` or
    `.v64`. On the first start the game copies it to `data/pd.ntsc-final.z64` in the right byte
    order (md5 `e03b088b6ac9e0080440efed07c1e40f`).
@@ -35,6 +36,15 @@ Everything the game writes (settings in `pd.ini`, saves, the log) stays in that 
 - **Light bars** in each player's colour (blue, red, green, pink), or the team's colour in a team
   match on one console.
 - **PlayStation button names** (CROSS, CIRCLE, L1, R2, OPTIONS) in the controls menus.
+- **Gyro aiming:** each DualSense's motion sensor turns the view on top of the twin-stick
+  controls, in split-screen too. `Input.PS5Gyro=0` turns it off and `Input.PS5GyroSpeed`
+  (0.1 to 5, default 1: the view turns as far as the controller) sets the speed.
+- **The PS5's keyboard** opens for every text field: the online name and PIN, chat and the
+  menus' keyboard.
+- **A GoldenEye tile:** `PPSA64008` is the same game installed as a second title that opens
+  GoldenEye as soon as it starts. Its folder needs both ROMs (Perfect Dark and GoldenEye USA).
+- **Faster HD texture loading:** four decode threads instead of one, and a 1.5 GB store of
+  decoded textures (`Mod.TexturePackCacheMB`) instead of 512 MB.
 - **A shader cache** built on a PC (`vulkan-shaders.bin`), so the first visit to each level
   compiles fewer shaders.
 

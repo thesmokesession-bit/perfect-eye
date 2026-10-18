@@ -2,18 +2,23 @@
 # Copies the title folder to a console over FTP. PS5_HOST picks the console (host:port), PS5_DIR
 # the folder that holds the title folder: /data/homebrew by default, /mnt/ext1/etaHEN/games for a
 # title the Prospero Store installed on the extended storage.
-#   tools/upload.sh            everything
+#   tools/upload.sh            everything, in both title folders
 #   tools/upload.sh eboot.bin  only the given files (paths inside the title folder)
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 host=${PS5_HOST:-192.168.68.125:1337}
 dir=${PS5_DIR:-/data/homebrew}
 cd "$root/dist"
-if [[ $# -eq 0 ]]; then
-    mapfile -t files < <(find PPSA64007 -type f)
-else
-    files=("${@/#/PPSA64007/}")
-fi
+# PS5_TITLES picks the title folders (both by default: Perfect Dark and the GoldenEye tile)
+titles=(${PS5_TITLES:-PPSA64007 PPSA64008})
+files=()
+for t in "${titles[@]}"; do
+    if [[ $# -eq 0 ]]; then
+        mapfile -t -O "${#files[@]}" files < <(find "$t" -type f)
+    else
+        for f in "$@"; do files+=("$t/$f"); done
+    fi
+done
 # The console's FTP server can refuse to overwrite a file (550), as it did for eboot.bin, so
 # each file goes up under a temporary name, the old one is deleted (if there) and the new one renamed.
 for f in "${files[@]}"; do

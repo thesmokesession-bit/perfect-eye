@@ -522,15 +522,21 @@ index 0aebf703a..3e08a6dbd 100644
  			return recvLength;
  		}
 diff --git a/port/include/input.h b/port/include/input.h
-index a15376e4c..c745c7c4d 100644
+index a15376e4c..3872a5207 100644
 --- a/port/include/input.h
 +++ b/port/include/input.h
-@@ -211,6 +211,8 @@ s32 inputGetKeyByName(const char *name);
+@@ -211,6 +211,14 @@ s32 inputGetKeyByName(const char *name);
  
  // get human-readable name from VK_ value
  const char *inputGetKeyName(s32 vk);
 +// the name a menu shows: a DualSense's own button names on the PS5
 +const char *inputGetKeyDisplayName(s32 vk);
++#ifdef PLATFORM_PS5
++// DualSense gyro aiming: whether controller cidx has it, and its look delta
++// this frame in the mouse's units
++s32 inputGyroActive(s32 cidx);
++void inputGyroGetDelta(s32 cidx, f32 *dx, f32 *dy);
++#endif
  
  // get CK_ value from human-readable name
  s32 inputGetContKeyByName(const char *name);
@@ -550,7 +556,7 @@ index ecfb59a65..53a2a6281 100644
  	curl_easy_setopt(curl, CURLOPT_WRITEDATA, buf);
  	curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)(req->timeout > 0 ? req->timeout : GHOSTNET_TIMEOUT));
 diff --git a/port/src/input.c b/port/src/input.c
-index a5e75de49..c8922dfa2 100644
+index a5e75de49..4998df3c3 100644
 --- a/port/src/input.c
 +++ b/port/src/input.c
 @@ -13,6 +13,12 @@
@@ -566,11 +572,269 @@ index a5e75de49..c8922dfa2 100644
  
  #if !SDL_VERSION_ATLEAST(2, 0, 14)
  // this was added in 2.0.14
-@@ -1368,12 +1374,52 @@ static inline void inputUpdateMouse(void)
+@@ -124,6 +130,119 @@ static s32 textQueueLen = 0;
+ 
+ static char *clipboardText = NULL;
+ 
++#ifdef PLATFORM_PS5
++/*
++ * The PS5's own keyboard (the system IME dialog) wherever the game starts text
++ * input: the online name and PIN, chat, the menus' keyboard. What is typed
++ * there arrives as typed characters followed by Enter, so every text field
++ * takes it the way it takes a PC keyboard. The structures are the ones
++ * PacBrew's SDL uses for its own PS5 keyboard (src/video/ps5/SDL_ps5keyboard.c).
++ */
++#include <wchar.h>
++
++typedef struct {
++	int userId;
++	int type;                 // 0 default, 1 basic Latin, 4 number
++	u64 supportedLanguages;
++	int enterLabel;
++	int inputMethod;
++	void *filter;
++	u32 option;
++	u32 maxTextLength;
++	wchar_t *inputTextBuffer;
++	float posx;
++	float posy;
++	int halign;
++	int valign;
++	const wchar_t *placeholder;
++	const wchar_t *title;
++	s8 reserved[16];
++} Ps5ImeDialogParam;
++
++typedef struct {
++	int outcome;              // 0 OK, 1 cancelled, 2 aborted
++	s8 reserved[12];
++} Ps5ImeDialogResult;
++
++int sceImeDialogInit(const Ps5ImeDialogParam *param, void *extended);
++int sceImeDialogGetStatus(void);      // 0 none, 1 running, 2 finished
++int sceImeDialogGetResult(Ps5ImeDialogResult *result);
++int sceImeDialogAbort(void);
++int sceImeDialogTerm(void);
++int sceUserServiceGetForegroundUser(int *user_id);
++
++static s32 imeRunning = 0;
++static s32 imeEnterPending = 0;
++static wchar_t imeText[TEXT_QUEUE_SIZE];
++static wchar_t imeTitle[] = L"Perfect Dark";
++
++static s32 inputPs5ImeOpen(void)
++{
++	Ps5ImeDialogParam param;
++	int user = -1;
++
++	if (imeRunning) {
++		return 1;
++	}
++
++	if (sceUserServiceGetForegroundUser(&user) != 0) {
++		return 0;
++	}
++
++	memset(&param, 0, sizeof(param));
++	memset(imeText, 0, sizeof(imeText));
++	param.userId = user;
++	param.type = 1;
++	param.maxTextLength = TEXT_QUEUE_SIZE - 1;
++	param.inputTextBuffer = imeText;
++	param.title = imeTitle;
++	param.halign = 1;
++	param.valign = 1;
++	param.posx = 960.f;
++	param.posy = 540.f;
++
++	const int r = sceImeDialogInit(&param, NULL);
++
++	if (r != 0) {
++		sysLogPrintf(LOG_WARNING, "input: the PS5 keyboard did not open (0x%08x)", (u32)r);
++		return 0;
++	}
++
++	imeRunning = 1;
++	return 1;
++}
++
++// Once a frame while the dialog is up: its text, when it closes, into the queue
++static void inputPs5ImeUpdate(void)
++{
++	Ps5ImeDialogResult result;
++
++	if (!imeRunning || sceImeDialogGetStatus() != 2) {
++		return;
++	}
++
++	memset(&result, 0, sizeof(result));
++	sceImeDialogGetResult(&result);
++	sceImeDialogTerm();
++	imeRunning = 0;
++
++	if (result.outcome != 0) {
++		lastKey = VK_ESCAPE;
++		return;
++	}
++
++	for (s32 i = 0; i < TEXT_QUEUE_SIZE && imeText[i] && textQueueLen < TEXT_QUEUE_SIZE; i++) {
++		const wchar_t c = imeText[i];
++
++		if (c >= 0x20 && c < 0x7f) {
++			textQueue[(textQueueHead + textQueueLen++) % TEXT_QUEUE_SIZE] = (char)c;
++		}
++	}
++
++	imeEnterPending = 1;
++}
++#endif
++
+ static const char *ckNames[CK_TOTAL_COUNT] = {
+ 	"R_CBUTTONS",
+ 	"L_CBUTTONS",
+@@ -1368,12 +1487,192 @@ static inline void inputUpdateMouse(void)
  	}
  }
  
 +#ifdef PLATFORM_PS5
++/*
++ * Gyro aiming with the DualSense. PacBrew's SDL reports no sensors for the
++ * PS5's pads (its PS5_JoystickSetSensorsEnabled is unsupported), so the pad
++ * is read here as well: its orientation quaternion, frame to frame, turned
++ * into a look delta in the units of the mouse's (freelookdx: degrees / 3.5).
++ * The layout is the one PacBrew's SDL reads (src/joystick/ps5).
++ */
++typedef struct {
++	u32 buttons;
++	u8 sticks[4];
++	u8 l2, r2;
++	u16 padding;
++	f32 qx, qy, qz, qw;
++	f32 rest1[6];
++	u8 touch[24];
++	u8 connected;
++	u64 timestamp;
++	u8 ext[16];
++	u8 count;
++	u8 unknown[15];
++} Ps5PadState;
++
++int scePadGetHandle(int user_id, int type, int index);
++int scePadReadState(int handle, Ps5PadState *data);
++int scePadSetMotionSensorState(int handle, int enable);
++int sceUserServiceGetLoginUserIdList(int user_ids[4]);
++int sceUserServiceGetUserName(int user_id, char *name, size_t size);
++
++static s32 gyroEnabled = 1;      // Input.PS5Gyro
++static f32 gyroSpeed = 1.0f;     // Input.PS5GyroSpeed: 1 turns the view as far as the pad turns
++static s32 gyroHandle[4] = { -1, -1, -1, -1 };
++static SDL_GameController *gyroFor[4];
++static f32 gyroPrev[4][4];
++static s32 gyroHavePrev[4];
++static f32 gyroDX[4], gyroDY[4];
++
++// The pad's system handle: SDL names each pad after its user, and opened it
++// with scePadOpen(user, standard port, 0), which scePadGetHandle hands back
++static s32 inputPs5GyroHandle(s32 i)
++{
++	int users[4];
++	char name[64];
++	const char *want = SDL_GameControllerName(pads[i]);
++
++	if (!want || sceUserServiceGetLoginUserIdList(users) != 0) {
++		return -1;
++	}
++
++	for (s32 u = 0; u < 4; u++) {
++		if (users[u] != -1 && sceUserServiceGetUserName(users[u], name, sizeof(name)) == 0 && !strcmp(name, want)) {
++			const s32 h = scePadGetHandle(users[u], 0, 0);
++
++			if (h >= 0) {
++				const s32 r = scePadSetMotionSensorState(h, 1);
++				sysLogPrintf(LOG_NOTE, "input: gyro on controller %d (%s): pad %d, motion sensor %s (0x%08x)",
++						i + 1, want, h, r == 0 ? "on" : "refused", (u32)r);
++			}
++
++			return h;
++		}
++	}
++
++	return -1;
++}
++
++static void inputPs5UpdateGyro(void)
++{
++	for (s32 i = 0; i < 4 && i < INPUT_MAX_CONTROLLERS; i++) {
++		Ps5PadState st;
++		f32 q[4];
++
++		gyroDX[i] = gyroDY[i] = 0.f;
++
++		if (!pads[i]) {
++			gyroFor[i] = NULL;
++			continue;
++		}
++
++		if (gyroFor[i] != pads[i]) {
++			gyroFor[i] = pads[i];
++			gyroHavePrev[i] = 0;
++			gyroHandle[i] = inputPs5GyroHandle(i);
++		}
++
++		if (!gyroEnabled || gyroHandle[i] < 0) {
++			continue;
++		}
++
++		memset(&st, 0, sizeof(st));
++
++		if (scePadReadState(gyroHandle[i], &st) != 0) {
++			continue;
++		}
++
++		q[0] = st.qx; q[1] = st.qy; q[2] = st.qz; q[3] = st.qw;
++
++		if (q[0] == 0.f && q[1] == 0.f && q[2] == 0.f && q[3] == 0.f) {
++			continue; // no orientation from this pad
++		}
++
++		if (gyroHavePrev[i]) {
++			// the rotation since last frame in the pad's own frame: conj(prev) * q
++			const f32 *p = gyroPrev[i];
++			f32 dw = p[3] * q[3] + p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
++			f32 dx = p[3] * q[0] - p[0] * q[3] - p[1] * q[2] + p[2] * q[1];
++			f32 dy = p[3] * q[1] + p[0] * q[2] - p[1] * q[3] - p[2] * q[0];
++
++			if (dw < 0.f) {
++				dx = -dx;
++				dy = -dy;
++			}
++
++			// 2 * the vector part is the angle in radians for a small turn; a
++			// deadband keeps a pad lying still from creeping the view
++			const f32 yaw = 2.f * dy, pitch = 2.f * dx;
++			const f32 deadband = 0.0004f;
++			const f32 scale = 57.29578f / 3.5f * gyroSpeed;
++
++			if (fabsf(yaw) > deadband) gyroDX[i] = -yaw * scale;
++			if (fabsf(pitch) > deadband) gyroDY[i] = -pitch * scale;
++		}
++
++		memcpy(gyroPrev[i], q, sizeof(q));
++		gyroHavePrev[i] = 1;
++	}
++}
++
++s32 inputGyroActive(s32 cidx)
++{
++	return cidx >= 0 && cidx < 4 && gyroEnabled && gyroHandle[cidx] >= 0 && pads[cidx];
++}
++
++void inputGyroGetDelta(s32 cidx, f32 *dx, f32 *dy)
++{
++	*dx = (cidx >= 0 && cidx < 4) ? gyroDX[cidx] : 0.f;
++	*dy = (cidx >= 0 && cidx < 4) ? gyroDY[cidx] : 0.f;
++}
++
 +/**
 + * Each controller's light bar shows its player: the team's colour in a team
 + * match on this console, otherwise the PS5's own player colours (blue, red,
@@ -614,12 +878,27 @@ index a5e75de49..c8922dfa2 100644
  
 +#ifdef PLATFORM_PS5
 +	inputPs5UpdateLightBars();
++	inputPs5UpdateGyro();
++	inputPs5ImeUpdate();
 +#endif
 +
  	if (mouseEnabled) {
  		inputUpdateMouse();
  	}
-@@ -1908,6 +1954,35 @@ const char *inputGetKeyName(s32 vk)
+@@ -1795,6 +2094,12 @@ void inputMouseGetScaledDelta(f32* dx, f32* dy)
+ 		mdx = rawdx * (0.022f / 3.5f) * mouseSensX;
+ 		mdy = rawdy * (0.022f / 3.5f) * mouseSensY;
+ 	}
++#ifdef PLATFORM_PS5
++	// the first controller's gyro rides the mouse's path: player 1 offline,
++	// and online, where the delta goes out in this machine's commands
++	mdx += gyroDX[0];
++	mdy += gyroDY[0];
++#endif
+ 	if (dx) *dx = mdx;
+ 	if (dy) *dy = mdy;
+ }
+@@ -1908,6 +2213,35 @@ const char *inputGetKeyName(s32 vk)
  	return vkNames[vk];
  }
  
@@ -655,8 +934,59 @@ index a5e75de49..c8922dfa2 100644
  s32 inputGetKeyByName(const char *name)
  {
  	s32 start = 0;
+@@ -1949,6 +2283,13 @@ void inputClearLastKey(void)
+ 
+ s32 inputGetLastKey(void)
+ {
++#ifdef PLATFORM_PS5
++	// the PS5 keyboard's OK, once every character it typed has been read
++	if (!lastKey && imeEnterPending && textQueueLen == 0) {
++		imeEnterPending = 0;
++		lastKey = VK_RETURN;
++	}
++#endif
+ 	return lastKey;
+ }
+ 
+@@ -1958,6 +2299,10 @@ void inputStartTextInput(void)
+ 	lastKey = 0;
+ 	textInput = 1;
+ 	SDL_StartTextInput();
++#ifdef PLATFORM_PS5
++	imeEnterPending = 0;
++	inputPs5ImeOpen();
++#endif
+ }
+ 
+ /**
+@@ -2069,6 +2414,14 @@ const char *inputGetClipboard(void)
+ void inputStopTextInput(void)
+ {
+ 	SDL_StopTextInput();
++#ifdef PLATFORM_PS5
++	if (imeRunning) {
++		sceImeDialogAbort();
++		sceImeDialogTerm();
++		imeRunning = 0;
++	}
++	imeEnterPending = 0;
++#endif
+ 
+ 	if (textInput) {
+ 		const u8 *state = SDL_GetKeyboardState(NULL);
+@@ -2099,6 +2452,10 @@ u32 inputGetKeyModState(void)
+ PD_CONSTRUCTOR static void inputConfigInit(void)
+ {
+ 	configRegisterInt("Input.MouseEnabled", &mouseEnabled, 0, 1);
++#ifdef PLATFORM_PS5
++	configRegisterInt("Input.PS5Gyro", &gyroEnabled, 0, 1);
++	configRegisterFloat("Input.PS5GyroSpeed", &gyroSpeed, 0.1f, 5.0f);
++#endif
+ 	configRegisterInt("Input.MouseLockMode", &mouseLockMode, MLOCK_OFF, MLOCK_AUTO);
+ 	configRegisterFloat("Input.MouseSpeedX", &mouseSensX, -30.f, 30.f);
+ 	configRegisterFloat("Input.MouseSpeedY", &mouseSensY, -30.f, 30.f);
 diff --git a/port/src/main.c b/port/src/main.c
-index 52d3fdc46..f51504248 100644
+index 52d3fdc46..7988319ab 100644
 --- a/port/src/main.c
 +++ b/port/src/main.c
 @@ -4,6 +4,7 @@
@@ -667,11 +997,14 @@ index 52d3fdc46..f51504248 100644
  #include "lib/main.h"
  #include "game/modoptions.h"
  #include "game/modrandom.h"
-@@ -214,8 +215,18 @@ static void mainApplySettingsRevision(void)
+@@ -214,8 +215,21 @@ static void mainApplySettingsRevision(void)
  	g_SettingsRevision = SETTINGS_REVISION;
  }
  
 +#ifdef PLATFORM_PS5
++// the GoldenEye tile: open GoldenEye on the Perfect Menu's first tick (mainmenu.c)
++bool g_Ps5BootGoldenEye = false;
++
 +// ps5/ps5_platform.c in the PS5 port: the log, the crash handler, SDL's
 +// offscreen video driver, the splash screen, and the arguments a title has
 +// no command line to pass (--portable, --vulkan)
@@ -686,6 +1019,16 @@ index 52d3fdc46..f51504248 100644
  	sysInitArgs(argc, argv);
  
  	if (!sysArgCheck("--no-crash-handler")) {
+@@ -371,6 +385,9 @@ int main(int argc, const char **argv)
+ 		g_FixedStep = fps < 30 ? 30 : fps > 240 ? 240 : fps;
+ 	}
+ 	g_ExitFrame = sysArgGetInt("--exit-frame", 0);
++#ifdef PLATFORM_PS5
++	g_Ps5BootGoldenEye = sysArgCheck("--ps5-goldeneye");
++#endif
+ 	g_StateHashEvery = sysArgGetInt("--state-hash", 0);
+ 	g_ShotFrame = sysArgGetInt("--screenshot-frame", 0);
+ 	g_AlarmAtFrame = sysArgGetInt("--alarm-at", 0);
 diff --git a/port/src/net/nettransport.c b/port/src/net/nettransport.c
 index 3842267e4..79d52900f 100644
 --- a/port/src/net/nettransport.c
@@ -795,10 +1138,22 @@ index fffbe04b9..66a6bc5c9 100644
  #else
  	static uintptr_t pagesize;
 diff --git a/port/src/texpack.c b/port/src/texpack.c
-index 0d3cce18c..501d1864f 100644
+index 0d3cce18c..43cbeee0e 100644
 --- a/port/src/texpack.c
 +++ b/port/src/texpack.c
-@@ -2981,6 +2981,20 @@ static void texpackScan(void)
+@@ -496,7 +496,11 @@ static struct texpackkept *kept; // TEXPACK_KEPT_SLOTS entries, allocated on fir
+ static u32 keptBytes;
+ static u32 keptUseSerial;
+ static s32 keptCount;
++#ifdef PLATFORM_PS5
++static s32 keptBudgetMB = 1536; // Mod.TexturePackCacheMB: the console has 16 GB to the PC's guess
++#else
+ static s32 keptBudgetMB = 512; // Mod.TexturePackCacheMB
++#endif
+ static u32 keptHits;     // claims answered from the store, i.e. decodes not repeated
+ static u32 keptEvicted;  // images the budget threw out
+ 
+@@ -2981,6 +2985,20 @@ static void texpackScan(void)
  		texpackScanDir(fsGetModDirAt(i));
  	}
  
@@ -819,6 +1174,65 @@ index 0d3cce18c..501d1864f 100644
  	{
  		// Last, so the pack the player chose in the menu wins over any
  		// textures/ a mod happens to ship. One scan covers both layouts -
+@@ -3596,6 +3614,15 @@ static struct texpackjob jobs[TEXPACK_MAX_PENDING];
+ static SDL_mutex *jobLock;
+ static SDL_cond *jobWake;
+ static SDL_Thread *jobThread;
++#if defined(PLATFORM_PS5) || defined(PD_TEXPACK_EXTRA_WORKERS_TEST)
++// The PS5 has eight cores and the decode is the whole cost of a pack's first
++// visit to a level: more workers take jobs from the same queue, each claiming
++// one under jobLock, so nothing else changes
++#define TEXPACK_EXTRA_WORKERS 3
++#else
++#define TEXPACK_EXTRA_WORKERS 0
++#endif
++static SDL_Thread *jobExtraThreads[TEXPACK_EXTRA_WORKERS + 1];
+ static s32 jobThreadRun;
+ static u32 jobSerial;
+ static u32 jobReadyBytes;
+@@ -3674,7 +3701,7 @@ static void texpackEnqueue(s32 slot, s32 texturenum)
+ 	jobs[slot].texturenum = texturenum;
+ 	jobs[slot].serial = ++jobSerial;
+ 	jobs[slot].reported = 0;
+-	SDL_CondSignal(jobWake);
++	SDL_CondBroadcast(jobWake);
+ }
+ 
+ static void texpackBacklogAdd(s32 texturenum)
+@@ -3869,6 +3896,10 @@ static void texpackAsyncStart(void)
+ 	jobThreadRun = 1;
+ 	jobThread = SDL_CreateThread(texpackDecodeWorker, "pd-texpack", NULL);
+ 
++	for (s32 w = 0; jobThread && w < TEXPACK_EXTRA_WORKERS; w++) {
++		jobExtraThreads[w] = SDL_CreateThread(texpackDecodeWorker, "pd-texpack", NULL);
++	}
++
+ 	if (!jobThread) {
+ 		// Not fatal: without the thread every request simply misses forever and
+ 		// the game draws its own textures, which is what no pack at all does.
+@@ -3928,6 +3959,13 @@ void texpackAsyncShutdown(void)
+ 
+ 	SDL_WaitThread(jobThread, NULL);
+ 	jobThread = NULL;
++
++	for (s32 w = 0; w < TEXPACK_EXTRA_WORKERS; w++) {
++		if (jobExtraThreads[w]) {
++			SDL_WaitThread(jobExtraThreads[w], NULL);
++			jobExtraThreads[w] = NULL;
++		}
++	}
+ }
+ 
+ /**
+@@ -4170,7 +4208,7 @@ s32 texpackPollDecoded(s32 *out, s32 max)
+ 
+ 	// A worker held back by the ready budget waits for exactly this.
+ 	if (jobReadyBytes <= TEXPACK_READY_BUDGET) {
+-		SDL_CondSignal(jobWake);
++		SDL_CondBroadcast(jobWake);
+ 	}
+ 
+ 	SDL_UnlockMutex(jobLock);
 diff --git a/port/src/update.c b/port/src/update.c
 index b32b6b917..4879cfd9a 100644
 --- a/port/src/update.c
@@ -997,6 +1411,89 @@ index 1481b7a61..4b7068d4a 100644
  	configRegisterInt("Video.DisplayFPS", &vidDisplayFPS, 0, 1);
  	configRegisterFloat("Video.DisplayFPSInterval", &vidDisplayFPSInterval, 0.01f, 32.f);
  	configRegisterInt("Video.MSAA", &vidMSAA, 1, 16);
+diff --git a/src/game/bondmove.c b/src/game/bondmove.c
+index 41fc439cd..e528c23f9 100644
+--- a/src/game/bondmove.c
++++ b/src/game/bondmove.c
+@@ -824,7 +824,14 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
+ 	f32 newverta;
+ #ifndef PLATFORM_N64
+ 	const f32 mlookscale = g_Vars.lvupdate240 ? (4.f / (f32)g_Vars.lvupdate240) : 4.f;
++#ifdef PLATFORM_PS5
++	// split-screen players 2-4 aim with their DualSense's gyro the way player 1 aims with the mouse
++	const s32 gyropad = optionsGetContpadNum1(g_Vars.currentplayerstats->mpindex);
++	const bool gyrolook = g_NetMode == NETMODE_NONE && g_Vars.currentplayernum > 0 && inputGyroActive(gyropad);
++	const bool allowmlook = (NET_MOUSE_SLOT(g_Vars.currentplayernum) || gyrolook) && (allowc1x || allowc1y);
++#else
+ 	const bool allowmlook = NET_MOUSE_SLOT(g_Vars.currentplayernum) && (allowc1x || allowc1y);
++#endif
+ 	bool allowmcross = false;
+ 	// GoldenEye's tank with the cannon in hand holds its sight in the middle
+ 	// as Aim Lock does, the mouse turning the turret in aim mode (getank.c)
+@@ -896,6 +903,9 @@ void bmoveProcessInput(bool allowc1x, bool allowc1y, bool allowc1buttons, bool i
+ 	if (allowmlook) {
+ 		// netplay: a remote player's mouse is its command's
+ 		if (g_NetMode != NETMODE_NONE) netMouseDelta(g_Vars.currentplayernum, &movedata.freelookdx, &movedata.freelookdy); else
++#ifdef PLATFORM_PS5
++		if (gyrolook) inputGyroGetDelta(gyropad, &movedata.freelookdx, &movedata.freelookdy); else
++#endif
+ 		inputMouseGetScaledDelta(&movedata.freelookdx, &movedata.freelookdy);
+ 		allowmcross = (PLAYER_EXTCFG().mouseaimmode == MOUSEAIM_CLASSIC) && !aimlock &&
+ 			(movedata.freelookdx || movedata.freelookdy || g_Vars.currentplayer->swivelpos[0] || g_Vars.currentplayer->swivelpos[1]);
+diff --git a/src/game/mainmenu.c b/src/game/mainmenu.c
+index ea7811d68..6f0015e30 100644
+--- a/src/game/mainmenu.c
++++ b/src/game/mainmenu.c
+@@ -5341,6 +5341,10 @@ MenuItemHandlerResult menuhandlerMainMenuCounterOperative(s32 operation, struct
+ 	return 0;
+ }
+ 
++#ifdef PLATFORM_PS5
++extern bool g_Ps5BootGoldenEye; // main.c: --ps5-goldeneye
++#endif
++
+ MenuDialogHandlerResult menudialogMainMenu(s32 operation, struct menudialogdef *dialogdef, union handlerdata *data)
+ {
+ 	switch (operation) {
+@@ -5359,6 +5363,21 @@ MenuDialogHandlerResult menudialogMainMenu(s32 operation, struct menudialogdef *
+ 			updatenoticeMainMenuTick(dialogdef, data->dialog2.inputs, true);
+ 			// netplay: why the last net game ended
+ 			if (g_NetNoticePending || g_NetLobbyRoom) netMainMenuTick();
++#ifdef PLATFORM_PS5
++			// The PS5's GoldenEye tile (PPSA64008) goes straight into GoldenEye,
++			// once, the way its Perfect Menu row does
++			if (g_Ps5BootGoldenEye) {
++				g_Ps5BootGoldenEye = false;
++
++				if (!modModeIsActive() && gexPlusFirstArena() >= 0) {
++					g_GexPlusVariant = NULL;
++
++					if (!geIntroOpen()) {
++						gexFrontOpen();
++					}
++				}
++			}
++#endif
+ 		} else {
+ 			updatenoticeMainMenuTick(dialogdef, data->dialog2.inputs, false);
+ #endif
+diff --git a/src/game/menuitem.c b/src/game/menuitem.c
+index 07a0ae11d..6a2eb9304 100644
+--- a/src/game/menuitem.c
++++ b/src/game/menuitem.c
+@@ -1874,7 +1874,12 @@ void menuitemKeyboardInit(struct menuitem *item, union menuitemdata *data)
+ 	// (or I) first, and the letters pressed before it were menu buttons: E is
+ 	// a second Accept, so "Eddie" typed into the name page came out as "e"
+ 	// (2026-10-08). A controller's player gets the grid as before.
++#ifdef PLATFORM_PS5
++	// on the PS5 a controller's player types on the system keyboard (input.c)
++	if (g_MenuKeyboardPlayer == -1 && NET_LOCAL_UI(g_MpPlayerNum)) {
++#else
+ 	if (g_MenuKeyboardPlayer == -1 && inputLastPressWasKeyboard() && NET_LOCAL_UI(g_MpPlayerNum)) {
++#endif
+ 		g_MenuKeyboardPlayer = g_MpPlayerNum;
+ 		inputClearLastKey();
+ 		inputClearLastTextChar();
 diff --git a/src/include/platform.h b/src/include/platform.h
 index 79a1864e8..ffa387037 100644
 --- a/src/include/platform.h
