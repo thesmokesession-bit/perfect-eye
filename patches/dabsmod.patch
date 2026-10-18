@@ -1354,7 +1354,7 @@ index fafdd8e28..156fb91b0 100644
 +
  #endif
 diff --git a/port/src/gexfront.c b/port/src/gexfront.c
-index f68bccb8f..651242281 100644
+index f68bccb8f..9c5bd8658 100644
 --- a/port/src/gexfront.c
 +++ b/port/src/gexfront.c
 @@ -3914,6 +3914,19 @@ static void frontTickScreen(void)
@@ -1364,7 +1364,7 @@ index f68bccb8f..651242281 100644
 +#ifdef PLATFORM_PS5
 +		{
 +			// the GoldenEye tile: its own top page is the top; there is no Perfect Dark under it
-+			extern bool g_Ps5GoldenEyeTile;
++			extern s32 g_Ps5GoldenEyeTile;
 +
 +			if (g_Ps5GoldenEyeTile) {
 +				back = 0;
@@ -2502,7 +2502,7 @@ index 88588d034..d3b8aba2d 100644
  		return gdl;
  	}
 diff --git a/port/src/main.c b/port/src/main.c
-index 52d3fdc46..ba6a2b844 100644
+index 52d3fdc46..d633feeff 100644
 --- a/port/src/main.c
 +++ b/port/src/main.c
 @@ -4,6 +4,7 @@
@@ -2519,9 +2519,9 @@ index 52d3fdc46..ba6a2b844 100644
  
 +#ifdef PLATFORM_PS5
 +// the GoldenEye tile: open GoldenEye on the Perfect Menu's first tick (mainmenu.c)
-+bool g_Ps5BootGoldenEye = false;
++s32 g_Ps5BootGoldenEye = 0; // s32, not bool: the game's bool is an s32 (types.h) and the port's a byte
 +// the GoldenEye tile (PPSA64008) for the whole run: GoldenEye on its own, no Perfect Dark in sight
-+bool g_Ps5GoldenEyeTile = false;
++s32 g_Ps5GoldenEyeTile = 0;
 +
 +// ps5/ps5_platform.c in the PS5 port: the log, the crash handler, SDL's
 +// offscreen video driver, the splash screen, and the arguments a title has
@@ -3973,7 +3973,7 @@ index 41fc439cd..e528c23f9 100644
  		allowmcross = (PLAYER_EXTCFG().mouseaimmode == MOUSEAIM_CLASSIC) && !aimlock &&
  			(movedata.freelookdx || movedata.freelookdy || g_Vars.currentplayer->swivelpos[0] || g_Vars.currentplayer->swivelpos[1]);
 diff --git a/src/game/filemgr.c b/src/game/filemgr.c
-index aef9f054e..25ff3eea0 100644
+index aef9f054e..d07fc9eba 100644
 --- a/src/game/filemgr.c
 +++ b/src/game/filemgr.c
 @@ -2803,6 +2803,51 @@ MenuDialogHandlerResult filemgrMainMenuDialog(s32 operation, struct menudialogde
@@ -3986,7 +3986,7 @@ index aef9f054e..25ff3eea0 100644
 +		{
 +			// The GoldenEye tile shows none of Perfect Dark's own pages: the save file is
 +			// the first one there, or a new one made without asking, once the list is read
-+			extern bool g_Ps5GoldenEyeTile;
++			extern s32 g_Ps5GoldenEyeTile;
 +			static bool picked;
 +
 +			if (g_Ps5GoldenEyeTile && !picked && g_FileLists[0] && g_FileLists[0]->timeuntilupdate == 0
@@ -4029,7 +4029,7 @@ index aef9f054e..25ff3eea0 100644
  	}
  
 diff --git a/src/game/mainmenu.c b/src/game/mainmenu.c
-index ea7811d68..3ff1e5876 100644
+index ea7811d68..61d9ee9ed 100644
 --- a/src/game/mainmenu.c
 +++ b/src/game/mainmenu.c
 @@ -5203,12 +5203,20 @@ struct menudialogdef g_GexPlusMenuDialog = {
@@ -4038,7 +4038,7 @@ index ea7811d68..3ff1e5876 100644
   */
 +#ifdef PLATFORM_PS5
 +// GoldenEye has a tile of its own on the PS5: the Perfect Dark tile's menu leaves it out
-+extern bool g_Ps5GoldenEyeTile; // main.c
++extern s32 g_Ps5GoldenEyeTile; // main.c
 +#define PS5_PD_TILE (!g_Ps5GoldenEyeTile)
 +#else
 +#define PS5_PD_TILE 0
@@ -4068,7 +4068,7 @@ index ea7811d68..3ff1e5876 100644
  }
  
 +#ifdef PLATFORM_PS5
-+extern bool g_Ps5BootGoldenEye; // main.c: --ps5-goldeneye
++extern s32 g_Ps5BootGoldenEye; // main.c: --ps5-goldeneye
 +extern s32 g_Ps5SetupDone; // optionsmenu.c: the PS5 Settings page was seen once
 +extern struct menudialogdef g_Ps5SetupMenuDialog;
 +#endif
