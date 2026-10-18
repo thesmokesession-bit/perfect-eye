@@ -809,7 +809,11 @@ void ps5PlatformInit(int *argc, const char ***argv)
 
 	/* There is no video driver for the console's display: the window is an offscreen window,
 	 * and the Vulkan renderer presents through VK_KHR_display (gfx_vulkan.cpp, __PROSPERO__). */
-	SDL_SetHint(SDL_HINT_VIDEODRIVER, "offscreen");
+	SDL_SetHintWithPriority(SDL_HINT_VIDEODRIVER, "offscreen", SDL_HINT_OVERRIDE);
+	/* SDL's own SIGINT/SIGTERM handlers would replace the title's and turn either signal into a
+	 * quit event, which the game answers with a plain exit(0): a console that ended the game
+	 * that way left nothing in the log. The title's handler reports them instead. */
+	SDL_SetHintWithPriority(SDL_HINT_NO_SIGNAL_HANDLERS, "1", SDL_HINT_OVERRIDE);
 	ps5ImportRoms();
 
 	/* Online play (ENet) runs on one dual-stack IPv6 UDP socket. Whether the console's
