@@ -686,6 +686,21 @@ index 0aebf703a..3e08a6dbd 100644
  
  			return recvLength;
  		}
+diff --git a/port/include/gedeathcam.h b/port/include/gedeathcam.h
+index d156b3590..246665221 100644
+--- a/port/include/gedeathcam.h
++++ b/port/include/gedeathcam.h
+@@ -46,4 +46,10 @@ void geDeathCamSeeHead(void);
+ s32 geDeathCamCamera(struct coord *pos, struct coord *up, struct coord *look,
+ 		struct coord *hintpos, RoomNum *hintrooms);
+ 
++// The kill cam's camera (Mod.KillCam): a Combat Simulator death's killer for a
++// few seconds after the fall. False when it has nothing to show.
++s32 geKillCamCamera(struct coord *pos, struct coord *up, struct coord *look,
++		struct coord *hintpos, RoomNum *hintrooms);
++extern s32 g_KillCam;
++
+ #endif
 diff --git a/port/include/input.h b/port/include/input.h
 index a15376e4c..d6a01642a 100644
 --- a/port/include/input.h
@@ -707,6 +722,24 @@ index a15376e4c..d6a01642a 100644
  
  // get CK_ value from human-readable name
  s32 inputGetContKeyByName(const char *name);
+diff --git a/port/include/killfeed.h b/port/include/killfeed.h
+index 0f995ee50..b90c5abaf 100644
+--- a/port/include/killfeed.h
++++ b/port/include/killfeed.h
+@@ -27,6 +27,13 @@ struct chrdata;
+ struct gset;
+ struct prop;
+ 
++// A hit marker in playernum's view (a client's from the host's CHRDAMAGE)
++void killfeedHitMarker(s32 playernum);
++
++// Who killed mpchr vplayernum last this stage (an mpchr number, -1 nobody
++// or themselves) and at what lvframe60; -1 when they have not died
++s32 killfeedKillerOf(s32 vplayernum, s32 *at);
++
+ // Mod.KillFeed as it stands here (offline/online resolved)
+ s32 killfeedIsOn(void);
+ 
 diff --git a/port/include/video.h b/port/include/video.h
 index 4fad217b1..052e9ba9d 100644
 --- a/port/include/video.h
@@ -917,6 +950,133 @@ index 616f6effc..a423cef7b 100644
  			queuedTotal += nextSize;
  
  			if (dumpFile) {
+diff --git a/port/src/gedeathcam.c b/port/src/gedeathcam.c
+index fafdd8e28..156fb91b0 100644
+--- a/port/src/gedeathcam.c
++++ b/port/src/gedeathcam.c
+@@ -102,6 +102,8 @@
+ #include "getank.h"
+ #include "gestan.h"
+ #include "geroom.h"
++#include "killfeed.h"
++#include "config.h"
+ #include "gedeathcam.h"
+ #include "system.h"
+ 
+@@ -954,4 +956,113 @@ s32 geDeathCamCamera(struct coord *pos, struct coord *up, struct coord *look,
+ 	return 1;
+ }
+ 
++/**
++ * The kill cam (Mod.KillCam: -1 online only, the default, 0 off, 1 every
++ * Combat Simulator match): once the fall is over, a few seconds of whoever
++ * killed you, from a camera found round them the way the replay finds one
++ * round the body (deathcamPick()), turned to follow them. It is the killer
++ * as they are now, not a recording of the shot. Then the game's own death
++ * view, and the respawn as ever.
++ */
++#define KILLCAM_FROM 45  // 60ths after the death: the fall first
++#define KILLCAM_TO   225 // three seconds of the killer
++#define KILLCAM_EYE  55  // over a chr's position, about the chest
++
++s32 g_KillCam = -1; // Mod.KillCam
++
++struct killcam {
++	s32 stagenum;
++	s32 at;      // the death it is for (killfeedKillerOf()'s lvframe60)
++	s32 ok;      // a camera was found
++	struct coord campos;
++	RoomNum camrooms[8];
++	struct coord look; // eased toward the killer
++};
++
++static struct killcam g_KillCams[MAX_PLAYERS];
++
++PD_CONSTRUCTOR static void killcamConfigInit(void)
++{
++	configRegisterInt("Mod.KillCam", &g_KillCam, -1, 1);
++}
++
++s32 geKillCamCamera(struct coord *pos, struct coord *up, struct coord *look,
++		struct coord *hintpos, RoomNum *hintrooms)
++{
++	struct player *pl = g_Vars.currentplayer;
++	struct killcam *kc = &g_KillCams[g_Vars.currentplayernum];
++	struct chrdata *killer;
++	struct coord target;
++	s32 victim, a, at, age;
++	f32 len;
++
++	if (!(g_KillCam == 1 || (g_KillCam < 0 && g_NetMode != NETMODE_NONE))
++			|| !g_Vars.normmplayerisrunning || !pl || !pl->prop || !pl->prop->chr || !pl->isdead) {
++		return 0;
++	}
++
++	victim = mpPlayerGetIndex(pl->prop->chr);
++	a = killfeedKillerOf(victim, &at);
++	age = g_Vars.lvframe60 - at;
++
++	if (a < 0 || a >= MAX_MPCHRS || age < KILLCAM_FROM || age >= KILLCAM_TO
++			|| !(killer = g_MpAllChrPtrs[a]) || !killer->prop || killer->prop->rooms[0] < 0) {
++		return 0;
++	}
++
++	target = killer->prop->pos;
++	target.y += KILLCAM_EYE;
++
++	if (kc->stagenum != g_Vars.stagenum || kc->at != at) {
++		struct deathcam dc;
++		struct coord from = target;
++		RoomNum fromrooms[8];
++
++		memset(&dc, 0, sizeof(dc));
++		memcpy(fromrooms, killer->prop->rooms, sizeof(fromrooms));
++		fromrooms[7] = -1;
++
++		kc->stagenum = g_Vars.stagenum;
++		kc->at = at;
++		kc->ok = deathcamPick(&dc, &target, &from, fromrooms, DEATHCAM_DIST);
++		kc->campos = dc.campos;
++		memcpy(kc->camrooms, dc.camrooms, sizeof(kc->camrooms));
++		kc->look = target;
++
++		sysLogPrintf(LOG_NOTE, "killcam: player %d killed by %d, %s", victim, a,
++				kc->ok ? "watching them" : "nowhere to watch from");
++	}
++
++	if (!kc->ok) {
++		return 0;
++	}
++
++	// the look eased after them, a fifth of the way a tick
++	kc->look.x += (target.x - kc->look.x) * 0.2f;
++	kc->look.y += (target.y - kc->look.y) * 0.2f;
++	kc->look.z += (target.z - kc->look.z) * 0.2f;
++
++	look->x = kc->look.x - kc->campos.x;
++	look->y = kc->look.y - kc->campos.y;
++	look->z = kc->look.z - kc->campos.z;
++	len = sqrtf(look->x * look->x + look->y * look->y + look->z * look->z);
++
++	if (len < 1.0f) {
++		return 0;
++	}
++
++	look->x /= len;
++	look->y /= len;
++	look->z /= len;
++
++	*pos = kc->campos;
++	up->x = 0;
++	up->y = 1;
++	up->z = 0;
++	*hintpos = kc->campos;
++	memcpy(hintrooms, kc->camrooms, sizeof(kc->camrooms));
++
++	return 1;
++}
++
+ #endif
 diff --git a/port/src/ghostnet.c b/port/src/ghostnet.c
 index ecfb59a65..53a2a6281 100644
 --- a/port/src/ghostnet.c
@@ -1652,6 +1812,157 @@ index a5e75de49..7c9ec6670 100644
  	configRegisterInt("Input.MouseLockMode", &mouseLockMode, MLOCK_OFF, MLOCK_AUTO);
  	configRegisterFloat("Input.MouseSpeedX", &mouseSensX, -30.f, 30.f);
  	configRegisterFloat("Input.MouseSpeedY", &mouseSensY, -30.f, 30.f);
+diff --git a/port/src/killfeed.c b/port/src/killfeed.c
+index 88588d034..d3b8aba2d 100644
+--- a/port/src/killfeed.c
++++ b/port/src/killfeed.c
+@@ -41,6 +41,105 @@
+ #include "net/net.h"
+ #include "gehud.h"
+ #include "killfeed.h"
++#include "config.h"
++
++/*
++ * Hit markers (Mod.HitMarkers): a small X at the middle of a player's view
++ * for a moment when their shot lands on someone in a match, red and longer
++ * for the kill. Offline and on a host from chrDamage() (killfeedNoteHit()),
++ * on a client from the host's CHRDAMAGE and DEATH (netevents.c). And who
++ * killed whom, for the kill cam (killfeedKillerOf(), gedeathcam.c).
++ */
++#define MARK_LIFE      12 // 60ths a hit's X stays
++#define MARK_KILL_LIFE 30 // and a kill's
++static s32 s_HitMarkers = 1; // Mod.HitMarkers
++static s32 s_MarkAt[MAX_PLAYERS];
++static s32 s_MarkKill[MAX_PLAYERS];
++static s32 s_MarkStage = -1;
++static s32 s_KilledBy[MAX_MPCHRS];
++static s32 s_KilledAt[MAX_MPCHRS];
++static s32 s_KilledStage = -1;
++
++PD_CONSTRUCTOR static void killfeedConfigInit(void)
++{
++	configRegisterInt("Mod.HitMarkers", &s_HitMarkers, 0, 1);
++}
++
++static void killfeedMark(s32 playernum, s32 kill)
++{
++	if (playernum < 0 || playernum >= MAX_PLAYERS) {
++		return;
++	}
++
++	if (s_MarkStage != g_Vars.stagenum) {
++		s_MarkStage = g_Vars.stagenum;
++		memset(s_MarkKill, 0, sizeof(s_MarkKill));
++	}
++
++	// a hit right after the kill does not turn the kill's X white
++	if (!kill && s_MarkKill[playernum] && g_Vars.lvframe60 - s_MarkAt[playernum] < MARK_KILL_LIFE) {
++		return;
++	}
++
++	s_MarkAt[playernum] = g_Vars.lvframe60;
++	s_MarkKill[playernum] = kill;
++}
++
++void killfeedHitMarker(s32 playernum)
++{
++	killfeedMark(playernum, 0);
++}
++
++s32 killfeedKillerOf(s32 vplayernum, s32 *at)
++{
++	if (s_KilledStage != g_Vars.stagenum || vplayernum < 0 || vplayernum >= MAX_MPCHRS) {
++		return -1;
++	}
++
++	*at = s_KilledAt[vplayernum];
++
++	return s_KilledBy[vplayernum];
++}
++
++static Gfx *killfeedRenderHitMarker(Gfx *gdl)
++{
++	const s32 pn = g_Vars.currentplayernum;
++	s32 age, life, cx, cy, s, i;
++
++	if (!s_HitMarkers || s_MarkStage != g_Vars.stagenum || pn < 0 || pn >= MAX_PLAYERS
++			|| !g_Vars.currentplayer || g_Vars.currentplayer->isdead) {
++		return gdl;
++	}
++
++	age = g_Vars.lvframe60 - s_MarkAt[pn];
++	life = s_MarkKill[pn] ? MARK_KILL_LIFE : MARK_LIFE;
++
++	if (age < 0 || age >= life) {
++		return gdl;
++	}
++
++	// four blocks down each diagonal, a gap at the middle for the crosshair
++	const s32 prevscalex = g_ScaleX;
++	g_ScaleX = g_ViRes == VIRES_HI ? 2 : 1;
++	cx = (viGetViewLeft() + viGetViewWidth() / 2) / g_ScaleX;
++	cy = viGetViewTop() + viGetViewHeight() / 2;
++	s = viGetViewHeight() >= 200 ? 1 : 0;
++
++	gdl = text0f153628(gdl);
++	gdl = textSetPrimColour(gdl, s_MarkKill[pn] ? 0xff3030ff - (age * 0xc0 / life) : 0xffffffff - (age * 0xc0 / life));
++
++	for (i = 3; i <= 6; i++) {
++		gDPFillRectangleScaled(gdl++, cx - i - s, cy - i - s, cx - i + 1, cy - i + 1);
++		gDPFillRectangleScaled(gdl++, cx + i, cy - i - s, cx + i + 1 + s, cy - i + 1);
++		gDPFillRectangleScaled(gdl++, cx - i - s, cy + i, cx - i + 1, cy + i + 1 + s);
++		gDPFillRectangleScaled(gdl++, cx + i, cy + i, cx + i + 1 + s, cy + i + 1 + s);
++	}
++
++	gdl = text0f153838(gdl);
++	g_ScaleX = prevscalex;
++
++	return gdl;
++}
+ 
+ #define FEED_LINES      5     // kept and shown in a full view
+ #define FEED_LINES_SPLIT 3    // in a split screen's view
+@@ -147,6 +246,11 @@ void killfeedNoteHit(struct chrdata *chr, struct gset *gset, struct prop *aprop,
+ 		return;
+ 	}
+ 
++	// a hit marker for the player who shot (not one hurting themselves)
++	if (aprop && aprop->type == PROPTYPE_PLAYER && aprop != chr->prop) {
++		killfeedHitMarker(playermgrGetPlayerNumByProp(aprop));
++	}
++
+ 	if (gset) {
+ 		weapon = gset->weaponnum;
+ 	}
+@@ -276,6 +380,19 @@ void killfeedRecord(s32 aplayernum, s32 vplayernum)
+ 		return;
+ 	}
+ 
++	// the kill cam's and the hit markers' half, whether the feed is up or not
++	if (s_KilledStage != g_Vars.stagenum) {
++		s_KilledStage = g_Vars.stagenum;
++		memset(s_KilledBy, 0xff, sizeof(s_KilledBy));
++	}
++
++	s_KilledBy[vplayernum] = aplayernum >= 0 && aplayernum != vplayernum && aplayernum < g_MpNumChrs ? aplayernum : -1;
++	s_KilledAt[vplayernum] = g_Vars.lvframe60;
++
++	if (aplayernum >= 0 && aplayernum != vplayernum && aplayernum < PLAYERCOUNT()) {
++		killfeedMark(aplayernum, 1);
++	}
++
+ 	if (s_Stage != g_Vars.stagenum) {
+ 		s_Stage = g_Vars.stagenum;
+ 		s_Count = 0;
+@@ -482,6 +599,8 @@ Gfx *killfeedRender(Gfx *gdl)
+ 	s32 n = 0;
+ 	s32 i;
+ 
++	gdl = killfeedRenderHitMarker(gdl);
++
+ 	if (!g_Vars.normmplayerisrunning || s_Count == 0 || s_Stage != g_Vars.stagenum || !killfeedIsOn()) {
+ 		return gdl;
+ 	}
 diff --git a/port/src/main.c b/port/src/main.c
 index 52d3fdc46..7988319ab 100644
 --- a/port/src/main.c
@@ -2073,6 +2384,21 @@ index 88752f3bc..7f69fc4be 100644
  	{
  		MENUITEMTYPE_SELECTABLE,
  		0,
+diff --git a/port/src/net/netevents.c b/port/src/net/netevents.c
+index f51c1b09d..682086544 100644
+--- a/port/src/net/netevents.c
++++ b/port/src/net/netevents.c
+@@ -2382,6 +2382,10 @@ static void netEvApply(struct netevc *e, f64 rt)
+ 
+ 		if (attacker && attacker == me) {
+ 			s_MyHits++;
++
++			if (victim != me) {
++				killfeedHitMarker(g_NetLocalSlot);
++			}
+ 		}
+ 
+ 		snprintf(extra, sizeof(extra), "victim %s%d attacker %s%d hitpart %d flags %d%s%s",
 diff --git a/port/src/net/nettransport.c b/port/src/net/nettransport.c
 index 3842267e4..79d52900f 100644
 --- a/port/src/net/nettransport.c
@@ -2954,6 +3280,21 @@ index 07a0ae11d..6a2eb9304 100644
  		g_MenuKeyboardPlayer = g_MpPlayerNum;
  		inputClearLastKey();
  		inputClearLastTextChar();
+diff --git a/src/game/player.c b/src/game/player.c
+index f0fd89d7a..2b41d9cec 100644
+--- a/src/game/player.c
++++ b/src/game/player.c
+@@ -6483,6 +6483,10 @@ void playerTick(bool arg0)
+ 		if (g_Vars.currentplayer->isdead
+ 				&& geDeathCamCamera(&spf4, &camup, &camlook, &deathcamhint, deathcamrooms)) {
+ 			player0f0c1840(&spf4, &camup, &camlook, &deathcamhint, deathcamrooms);
++		} else if (g_Vars.currentplayer->isdead
++				&& geKillCamCamera(&spf4, &camup, &camlook, &deathcamhint, deathcamrooms)) {
++			// a Combat Simulator death: who did it, for a few seconds (gedeathcam.c)
++			player0f0c1840(&spf4, &camup, &camlook, &deathcamhint, deathcamrooms);
+ 		} else if (g_Vars.currentplayer->isdead && g_NetMode != NETMODE_NONE && netSpecDeadCameraTick()) {
+ 			// netplay: a dead co-op player watching the others (netspec.c)
+ 		} else
 diff --git a/src/game/timing.c b/src/game/timing.c
 index a87d348a1..c39151c2c 100644
 --- a/src/game/timing.c

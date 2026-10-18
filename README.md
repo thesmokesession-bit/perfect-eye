@@ -105,6 +105,10 @@ for the Xbox 360 release's models, which need that release in `added-content/`.
   Every room shows an eight-character **room code** next to its name: friends pick **Join by
   Code** in the room list and type it to go straight in. The code is the lobby's own room id, so a
   PC player's room has one too, though only the PS5 build shows it.
+  Online, a death shows **who killed you**: after the fall, a few seconds of the killer from a
+  camera found near them (live, not a recording). **Hit markers** flash an X at the crosshair
+  when a shot lands, red for the kill, and the **kill feed** (Killer [Weapon] Victim) runs at the
+  top right. `Mod.KillCam` (-1 online only, 0 off, 1 every match), `Mod.HitMarkers`, `Mod.KillFeed`.
   Hosting works without opening ports; forwarding **UDP 27100** to the PS5 makes joins direct.
 
 ## When something goes wrong
