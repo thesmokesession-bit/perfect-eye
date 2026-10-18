@@ -7,3 +7,4 @@ dist/
 .home/
 docker/.dockercfg/
 .ps5-host
+local-tiles/
