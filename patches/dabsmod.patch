@@ -1384,10 +1384,10 @@ index 1907f81fe..ebb17da0d 100644
  	snprintf(g_NoticeTitle, sizeof(g_NoticeTitle), "CONVERTING %s", name);
  	for (char *c = g_NoticeTitle; *c; ++c) {
 diff --git a/port/src/ghostnet.c b/port/src/ghostnet.c
-index ecfb59a65..139af7d86 100644
+index ecfb59a65..a003ae36a 100644
 --- a/port/src/ghostnet.c
 +++ b/port/src/ghostnet.c
-@@ -769,6 +769,27 @@ static size_t ghostnetCurlWrite(void *ptr, size_t size, size_t nmemb, void *arg)
+@@ -769,6 +769,72 @@ static size_t ghostnetCurlWrite(void *ptr, size_t size, size_t nmemb, void *arg)
  	return ghostnetBufAppend(arg, ptr, add) ? add : 0;
  }
  
@@ -1412,31 +1412,90 @@ index ecfb59a65..139af7d86 100644
 +}
 +#endif
 +
++// One connection cache, DNS cache and TLS session cache for every request on every thread:
++// each request made its own handle and so its own lookup, TCP connection and TLS handshake,
++// and the lobby's pages took seconds a step on the console (2026-10-18). With the share a
++// request to the same server goes out on the connection the last one left open.
++static SDL_mutex *g_CurlShareLocks[CURL_LOCK_DATA_LAST];
++static CURLSH *g_CurlShare;
++
++static void ghostnetShareLock(CURL *handle, curl_lock_data data, curl_lock_access access, void *arg)
++{
++	SDL_LockMutex(g_CurlShareLocks[data]);
++}
++
++static void ghostnetShareUnlock(CURL *handle, curl_lock_data data, void *arg)
++{
++	SDL_UnlockMutex(g_CurlShareLocks[data]);
++}
++
++static CURLSH *ghostnetShare(void)
++{
++	static SDL_SpinLock once;
++	SDL_AtomicLock(&once);
++
++	if (!g_CurlShare) {
++		CURLSH *share = curl_share_init();
++		s32 i;
++
++		for (i = 0; i < CURL_LOCK_DATA_LAST; i++) {
++			g_CurlShareLocks[i] = SDL_CreateMutex();
++		}
++
++		if (share) {
++			curl_share_setopt(share, CURLSHOPT_LOCKFUNC, ghostnetShareLock);
++			curl_share_setopt(share, CURLSHOPT_UNLOCKFUNC, ghostnetShareUnlock);
++			curl_share_setopt(share, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS);
++			curl_share_setopt(share, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION);
++			curl_share_setopt(share, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
++		}
++
++		g_CurlShare = share;
++	}
++
++	SDL_AtomicUnlock(&once);
++	return g_CurlShare;
++}
++
  static int ghostnetCurlProgress(void *arg, curl_off_t dltotal, curl_off_t dlnow, curl_off_t ultotal, curl_off_t ulnow)
  {
  	const struct ghostnetreq *req = arg;
-@@ -794,6 +815,14 @@ bool ghostnetSend(const struct ghostnetreq *req, struct ghostnetbuf *buf,
+@@ -794,6 +860,19 @@ bool ghostnetSend(const struct ghostnetreq *req, struct ghostnetbuf *buf,
  	}
  
  	curl_easy_setopt(curl, CURLOPT_URL, req->url);
++	if (ghostnetShare()) {
++		curl_easy_setopt(curl, CURLOPT_SHARE, ghostnetShare());
++	}
 +#ifdef PLATFORM_PS5
 +	// No system CA store on the console: the title ships Mozilla's bundle
 +	curl_easy_setopt(curl, CURLOPT_CAINFO, "/app0/cacert.pem");
-+	// curl's own account of the connection into the log: online play could not connect
-+	// from the console and nothing said why (2026-10-18)
-+	curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, ghostnetCurlDebug);
-+	curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
++	// curl's own account of a connection, into the log, with --curl-trace (online play could
++	// not connect from the console and nothing said why, 2026-10-18)
++	if (sysArgCheck("--curl-trace")) {
++		curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, ghostnetCurlDebug);
++		curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
++	}
 +#endif
  	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, ghostnetCurlWrite);
  	curl_easy_setopt(curl, CURLOPT_WRITEDATA, buf);
  	curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)(req->timeout > 0 ? req->timeout : GHOSTNET_TIMEOUT));
-@@ -878,7 +907,14 @@ bool ghostnetSend(const struct ghostnetreq *req, struct ghostnetbuf *buf,
+@@ -878,7 +957,23 @@ bool ghostnetSend(const struct ghostnetreq *req, struct ghostnetbuf *buf,
  		curl_slist_free_all(headers);
  	}
  
 +#ifdef PLATFORM_PS5
-+	sysLogPrintf(LOG_NOTE, "ghostnet: %s answered %ld (%s), %u bytes", req->url, code, curl_easy_strerror(res),
-+			(u32)buf->len);
++	{
++		// where a slow request's time went
++		double dns = 0, tcp = 0, tls = 0, total = 0;
++		curl_easy_getinfo(curl, CURLINFO_NAMELOOKUP_TIME, &dns);
++		curl_easy_getinfo(curl, CURLINFO_CONNECT_TIME, &tcp);
++		curl_easy_getinfo(curl, CURLINFO_APPCONNECT_TIME, &tls);
++		curl_easy_getinfo(curl, CURLINFO_TOTAL_TIME, &total);
++		sysLogPrintf(LOG_NOTE, "ghostnet: %s answered %ld (%s), %u bytes; dns %d ms, tcp %d, tls %d, all %d", req->url,
++				code, curl_easy_strerror(res), (u32)buf->len, (int)(dns * 1000), (int)(tcp * 1000), (int)(tls * 1000),
++				(int)(total * 1000));
++	}
 +#endif
  	curl_easy_cleanup(curl);
 +#ifdef PLATFORM_PS5
@@ -1445,7 +1504,7 @@ index ecfb59a65..139af7d86 100644
  
  	return res == CURLE_OK;
  }
-@@ -1524,6 +1560,9 @@ static int ghostnetWorker(void *arg)
+@@ -1524,6 +1619,9 @@ static int ghostnetWorker(void *arg)
  		snprintf(msg, sizeof(msg), "%s", LANG_N("wrong name or PIN"));
  	}
  
@@ -3367,10 +3426,10 @@ index b5b178af9..19caf8616 100644
  	// Mod Options is where that is asked for, and until it has been the key
  	// does nothing rather than failing loudly once a frame.
 diff --git a/port/src/system.c b/port/src/system.c
-index fffbe04b9..b03cfe6dd 100644
+index fffbe04b9..43ce89a7d 100644
 --- a/port/src/system.c
 +++ b/port/src/system.c
-@@ -335,6 +335,16 @@ static void sysFatalV(s32 report, const char *fmt, va_list ap)
+@@ -335,6 +335,18 @@ static void sysFatalV(s32 report, const char *fmt, va_list ap)
  	fflush(stdout);
  	fflush(stderr);
  
@@ -3379,7 +3438,9 @@ index fffbe04b9..b03cfe6dd 100644
 +	// ever): a notification says what went wrong, and the game closes.
 +	{
 +		extern void ps5Notify(const char *fmt, ...);
-+		ps5Notify("Perfect Dark could not start: %s", shown);
++		extern void ps5LastWords(const char *fmt, ...);
++		ps5LastWords("fatal: %s", shown);
++		ps5Notify("Perfect Dark stopped: %s", shown);
 +		_exit(1);
 +	}
 +#endif
@@ -3387,7 +3448,7 @@ index fffbe04b9..b03cfe6dd 100644
  	// The dialog is a desktop window, and a desktop left at the game's
  	// exclusive resolution is a poor place to read one.
  	videoRestoreDesktop();
-@@ -381,6 +391,12 @@ s32 sysRestartRequested(void)
+@@ -381,6 +393,12 @@ s32 sysRestartRequested(void)
  
  void sysGetExecutablePath(char *outPath, const u32 outLen)
  {
@@ -3400,7 +3461,7 @@ index fffbe04b9..b03cfe6dd 100644
  	// try asking SDL
  	char *sdlPath = SDL_GetBasePath();
  
-@@ -415,6 +431,10 @@ void sysGetExecutablePath(char *outPath, const u32 outLen)
+@@ -415,6 +433,10 @@ void sysGetExecutablePath(char *outPath, const u32 outLen)
  
  void sysGetHomePath(char *outPath, const u32 outLen)
  {
@@ -3411,7 +3472,7 @@ index fffbe04b9..b03cfe6dd 100644
  	// try asking SDL
  	char *sdlPath = SDL_GetPrefPath("", "perfectdark");
  
-@@ -489,6 +509,14 @@ s32 sysMemReadableRange(const void *ptr, uintptr_t *lo, uintptr_t *hi)
+@@ -489,6 +511,14 @@ s32 sysMemReadableRange(const void *ptr, uintptr_t *lo, uintptr_t *hi)
  	*lo = (uintptr_t)mbi.BaseAddress;
  	*hi = (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
  

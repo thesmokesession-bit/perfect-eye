@@ -693,11 +693,52 @@ int __wrap_fcntl(int fd, int cmd, ...)
 	return r;
 }
 
+/* The last thing written before the game ends itself (sysFatal, exit()): into the watchdog's
+ * file at once, since a line through stdio's pipe is lost when the process goes before the
+ * writer gets to it. With the code addresses on the stack, as a crash's report has. */
+static void stack_scan(const char *who)
+{
+	const uintptr_t code_start = (uintptr_t)&main & ~(uintptr_t)0x3fffff;
+	const uintptr_t code_end = code_start + 0x2000000;
+	const uintptr_t *stack = (const uintptr_t *)__builtin_frame_address(0);
+	const uintptr_t *top = (const uintptr_t *)stack_end((uintptr_t)stack);
+	int found = 0;
+	watch_printf("%s (main at %p)\n", who, (void *)&main);
+	for (int i = 0; i < 4096 && found < 32 && stack + i < top; i++) {
+		if (stack[i] >= code_start && stack[i] < code_end) {
+			watch_printf("  stack[%d] %p\n", i, (void *)stack[i]);
+			found++;
+		}
+	}
+}
+
+void ps5LastWords(const char *fmt, ...)
+{
+	char line[512];
+	va_list args;
+	va_start(args, fmt);
+	vsnprintf(line, sizeof(line), fmt, args);
+	va_end(args);
+	watch_printf("last words: %s\n", line);
+	stack_scan("last words from");
+}
+
+static void on_exit_report(void)
+{
+	stack_scan("exit() called");
+}
+
 /* ps5_rom.c: the player's ROMs put where the game looks for them */
 void ps5ImportRoms(void);
 
 void ps5PlatformInit(int *argc, const char ***argv)
 {
+	{
+		FILE *f = fopen(WATCH_PATH, "w");
+		if (f) {
+			fclose(f);
+		}
+	}
 	open_log();
 
 	struct sigaction action;
@@ -719,12 +760,7 @@ void ps5PlatformInit(int *argc, const char ***argv)
 		sigaction(sigs[i], &action, NULL);
 	}
 	main_thread = pthread_self();
-	{
-		FILE *f = fopen(WATCH_PATH, "w");
-		if (f) {
-			fclose(f);
-		}
-	}
+
 	{
 		struct sigaction sample;
 		memset(&sample, 0, sizeof(sample));
@@ -738,6 +774,7 @@ void ps5PlatformInit(int *argc, const char ***argv)
 		}
 	}
 	check_imports();
+	atexit(on_exit_report);
 
 	/* A peer that goes away mid-send must not end the game: online play, the lobby, curl */
 	signal(SIGPIPE, SIG_IGN);
