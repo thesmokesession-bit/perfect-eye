@@ -37,6 +37,11 @@ put() {
     curl -sS "ftp://$host/" -Q "*DELE $dir/$1" -Q "RNFR $dir/$1.new" -Q "RNTO $dir/$1" -o /dev/null
 }
 
+put_abs() {
+    curl -sS -T "$1" "ftp://$host$2.new" &&
+    curl -sS "ftp://$host/" -Q "*DELE $2" -Q "RNFR $2.new" -Q "RNTO $2" -o /dev/null
+}
+
 curl -sS --connect-timeout 5 "ftp://$host/" -o /dev/null ||
     { echo "cannot reach the PS5's FTP server at $host (wrong address in $hostfile?)"; exit 1; }
 
@@ -72,4 +77,11 @@ while IFS= read -r d; do
     done < "$tmp/files"
     flush
 done < "$tmp/dirs"
+# The home screen draws a title's art from its own copy in /user/appmeta, made when the title was
+# installed: new art in sce_sys shows only once that copy is replaced too (and the PS5 restarted)
+for t in $titles; do
+    for f in icon0.png pic0.dds pic1.dds; do
+        [ -f "$t/sce_sys/$f" ] && put_abs "$t/sce_sys/$f" "/user/appmeta/$t/$f" || echo "  (could not refresh $t's $f on the home screen)"
+    done
+done
 echo "Sent $sent file(s) to the PS5 at $host ($kept already there). Start Perfect Dark from the home screen."

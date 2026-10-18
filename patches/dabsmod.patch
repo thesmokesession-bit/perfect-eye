@@ -4048,10 +4048,18 @@ index 41fc439cd..e528c23f9 100644
  		allowmcross = (PLAYER_EXTCFG().mouseaimmode == MOUSEAIM_CLASSIC) && !aimlock &&
  			(movedata.freelookdx || movedata.freelookdy || g_Vars.currentplayer->swivelpos[0] || g_Vars.currentplayer->swivelpos[1]);
 diff --git a/src/game/filemgr.c b/src/game/filemgr.c
-index aef9f054e..a761fed84 100644
+index aef9f054e..b6b6f2881 100644
 --- a/src/game/filemgr.c
 +++ b/src/game/filemgr.c
-@@ -2803,6 +2803,51 @@ MenuDialogHandlerResult filemgrMainMenuDialog(s32 operation, struct menudialogde
+@@ -20,6 +20,7 @@
+ #include "data.h"
+ #include "types.h"
+ #include "mpsetups.h"
++#include "system.h"
+ 
+ // bss
+ struct fileguid g_FilemgrFileToCopy;
+@@ -2803,6 +2804,63 @@ MenuDialogHandlerResult filemgrMainMenuDialog(s32 operation, struct menudialogde
  	case MENUOP_TICK:
  		filelistsTick();
  		break;
@@ -4064,10 +4072,20 @@ index aef9f054e..a761fed84 100644
 +			extern s32 g_Ps5GoldenEyeTile;
 +			static bool picked;
 +
++			static s32 waits;
++
++			if (g_Ps5GoldenEyeTile && !picked && ++waits == 300) {
++				sysLogPrintf(LOG_WARNING, "tile: no save picked after 300 ticks: list %p, update in %d, files %d, dialog %p (this one %p)",
++						g_FileLists[0], g_FileLists[0] ? g_FileLists[0]->timeuntilupdate : -1,
++						g_FileLists[0] ? g_FileLists[0]->numfiles : -1,
++						g_Menus[g_MpPlayerNum].curdialog ? g_Menus[g_MpPlayerNum].curdialog->definition : NULL, dialogdef);
++			}
++
 +			// (numdevices counts controller paks: the game pak is always there and it is 0)
 +			if (g_Ps5GoldenEyeTile && !picked && g_FileLists[0] && g_FileLists[0]->timeuntilupdate == 0
 +					&& g_Menus[g_MpPlayerNum].curdialog && g_Menus[g_MpPlayerNum].curdialog->definition == dialogdef) {
 +				picked = true;
++				sysLogPrintf(LOG_NOTE, "tile: %d save file(s) here, the first one taken", g_FileLists[0]->numfiles);
 +
 +				if (g_FileLists[0]->numfiles > 0) {
 +					g_GameFileGuid.fileid = g_FileLists[0]->files[0].fileid;
@@ -4089,6 +4107,8 @@ index aef9f054e..a761fed84 100644
 +					gamefileLoadDefaults(&g_GameFile);
 +					strcpy(g_GameFile.name, "BOND");
 +
++					sysLogPrintf(LOG_NOTE, "tile: a new save on device %d", device);
++
 +					if (device >= 0) {
 +						filemgrSaveGameToDevice(device);
 +					} else {
@@ -4104,10 +4124,18 @@ index aef9f054e..a761fed84 100644
  	}
  
 diff --git a/src/game/mainmenu.c b/src/game/mainmenu.c
-index ea7811d68..4b1debb51 100644
+index ea7811d68..a83d0fde0 100644
 --- a/src/game/mainmenu.c
 +++ b/src/game/mainmenu.c
-@@ -5203,12 +5203,20 @@ struct menudialogdef g_GexPlusMenuDialog = {
+@@ -50,6 +50,7 @@
+ #include "types.h"
+ #ifndef PLATFORM_N64
+ #include "patchnotes.h"
++#include "system.h"
+ #include "update.h"
+ #include "net/net.h"
+ #endif
+@@ -5203,12 +5204,20 @@ struct menudialogdef g_GexPlusMenuDialog = {
   * (port/src/gexfront.c), or this dialog when there is nothing converted to draw
   * them with - it says why.
   */
@@ -4129,7 +4157,7 @@ index ea7811d68..4b1debb51 100644
  	}
  
  	// GoldenEye's own intro first (port/src/geintro.c), which opens the folder
-@@ -5264,7 +5272,7 @@ static MenuItemHandlerResult menuhandlerMainMenuVariant(s32 operation, struct me
+@@ -5264,7 +5273,7 @@ static MenuItemHandlerResult menuhandlerMainMenuVariant(s32 operation, struct me
  	const char *name = gexPlusRomGetVariant(item->param);
  
  	if (operation == MENUOP_CHECKHIDDEN) {
@@ -4138,7 +4166,7 @@ index ea7811d68..4b1debb51 100644
  	}
  
  	if (operation == MENUOP_CHECKDISABLED) {
-@@ -5341,6 +5349,14 @@ MenuItemHandlerResult menuhandlerMainMenuCounterOperative(s32 operation, struct
+@@ -5341,6 +5350,14 @@ MenuItemHandlerResult menuhandlerMainMenuCounterOperative(s32 operation, struct
  	return 0;
  }
  
@@ -4153,7 +4181,7 @@ index ea7811d68..4b1debb51 100644
  MenuDialogHandlerResult menudialogMainMenu(s32 operation, struct menudialogdef *dialogdef, union handlerdata *data)
  {
  	switch (operation) {
-@@ -5359,6 +5375,33 @@ MenuDialogHandlerResult menudialogMainMenu(s32 operation, struct menudialogdef *
+@@ -5359,6 +5376,43 @@ MenuDialogHandlerResult menudialogMainMenu(s32 operation, struct menudialogdef *
  			updatenoticeMainMenuTick(dialogdef, data->dialog2.inputs, true);
  			// netplay: why the last net game ended
  			if (g_NetNoticePending || g_NetLobbyRoom) netMainMenuTick();
@@ -4163,25 +4191,35 @@ index ea7811d68..4b1debb51 100644
 +			// The first start's settings page first; GoldenEye opens when it closes
 +#ifdef PLATFORM_PS5
 +			if (!g_Ps5SetupDone) {
++				sysLogPrintf(LOG_NOTE, "tile: the PS5 settings page first");
 +				menuPushDialog(&g_Ps5SetupMenuDialog);
 +			} else
 +#endif
 +			if (g_Ps5BootGoldenEye) {
 +				g_Ps5BootGoldenEye = false;
++				s32 intro = -1, front = -1;
 +
 +				if (!modModeIsActive() && gexPlusFirstArena() >= 0) {
 +					g_GexPlusVariant = NULL;
++					intro = geIntroOpen();
 +
-+					if (!geIntroOpen()) {
-+						gexFrontOpen();
++					if (!intro) {
++						front = gexFrontOpen();
 +					}
 +				}
++
++				sysLogPrintf(LOG_NOTE, "tile: GoldenEye at the Perfect Menu: modmode %d, first arena %d, intro %d, folder %d",
++						modModeIsActive(), gexPlusFirstArena(), intro, front);
 +			} else if (g_Ps5GoldenEyeTile && !geIntroIsActive() && !gexFrontIsActive() && !modModeIsActive()
 +					&& gexPlusFirstArena() >= 0) {
 +				// whatever closed the folder, the GoldenEye tile goes back to it rather than
 +				// showing Perfect Dark's menu
++				static s32 failed = 0;
 +				g_GexPlusVariant = NULL;
-+				gexFrontOpen();
++
++				if (!gexFrontOpen() && !failed++) {
++					sysLogPrintf(LOG_WARNING, "tile: GoldenEye's folder would not open");
++				}
 +			}
 +#endif
  		} else {
