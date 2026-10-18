@@ -4,6 +4,7 @@ the port in the mood of the original covers: no character, logo or wordmark of e
 icon0.png with the title set over it, and a 16:9 background of the same picture.
     tools/make-tiles.py pd assets/tiles/perfect-dark.png sce_sys
     tools/make-tiles.py ge assets/tiles/goldeneye.png sce_sys_ge
+    tools/make-tiles.py box assets/boxart/perfect-dark.png sce_sys   (the box cover, untitled)
 then tools/make-backgrounds.py <out>/background.png <out> for pic0.dds and pic1.dds."""
 import sys
 from pathlib import Path
@@ -65,7 +66,11 @@ def title(img, style, scale):
 
 
 def main():
-    style, src, out = STYLES[sys.argv[1]], Path(sys.argv[2]), Path(sys.argv[3])
+    # "box": a cover that carries its own title (assets/boxart), set as it is
+    style, src, out = STYLES.get(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
+    if style is None:
+        global title
+        title = lambda img, style, scale: img
     art = Image.open(src).convert("RGB")
     icon = title(art.resize((1024, 1024), Image.LANCZOS), style, 2.0).resize((512, 512), Image.LANCZOS)
     icon.save(out / "icon0.png")
@@ -79,7 +84,7 @@ def main():
     ImageDraw.Draw(edge).rectangle([80, 0, H - 80, H], fill=255)
     bg.paste(titled, ((W - H) // 2, 0), edge.filter(ImageFilter.GaussianBlur(50)))
     bg.save(out / "background.png")
-    print(f"make-tiles.py: {out}/icon0.png and {out}/background.png ({style['text']})")
+    print(f"make-tiles.py: {out}/icon0.png and {out}/background.png ({style['text'] if style else 'as it is'})")
 
 
 main()
