@@ -3,7 +3,7 @@
 # dist/PPSA64008 (the GoldenEye tile: the same game, which opens GoldenEye at once).
 # Each has the eboot, its home screen files, the system libc module, the CA bundle the
 # lobby's HTTPS needs, the shader cache and an empty data/ for the player's ROMs.
-#   tools/package.sh             title folders, for upload.sh (no ROM: the player adds theirs)
+#   tools/package.sh             title folders and the two .command tools, for upload.sh (no ROM: the player adds theirs)
 #   tools/package.sh --release   the same folders zipped, with the zip's sha256
 set -euo pipefail
 release=false
@@ -36,11 +36,14 @@ title PPSA64008 "$root/sce_sys_ge" "The GoldenEye tile runs inside Perfect Dark,
 (USA) (Rev 1) ROM and your GoldenEye 007 (USA) ROM (.z64, .n64 or .v64, any file names) into the
 title folder. The first start puts them in place and converts GoldenEye, then opens it."
 
+# beside the title folders: the Mac's (or any Unix's) wireless install/update and save sync
+cp "$root/tools/ps5-push.command" "$root/tools/ps5-sync-saves.command" "$root/dist/"
+
 if $release; then
     version=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["contentVersion"])' "$root/sce_sys/param.json")
     zip="$root/dist/PerfectDark-PS5-$version.zip"
     rm -f "$zip"
-    (cd "$root/dist" && zip -qr -9 "$zip" PPSA64007 PPSA64008)
+    (cd "$root/dist" && zip -qr -9 "$zip" PPSA64007 PPSA64008 ps5-push.command ps5-sync-saves.command)
     (cd "$root/dist" && sha256sum "$(basename "$zip")" > "$(basename "$zip").sha256")
     echo "package.sh: $zip ($(du -h "$zip" | cut -f1))"
 fi

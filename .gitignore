@@ -6,3 +6,4 @@ dist/
 .deps/
 .home/
 docker/.dockercfg/
+.ps5-host

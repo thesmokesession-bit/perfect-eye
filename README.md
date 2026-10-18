@@ -39,6 +39,16 @@ Everything the game writes (settings in `pd.ini`, saves, the log) stays in that 
 - **Gyro aiming:** each DualSense's motion sensor turns the view on top of the twin-stick
   controls, in split-screen too. `Input.PS5Gyro=0` turns it off and `Input.PS5GyroSpeed`
   (0.1 to 5, default 1: the view turns as far as the controller) sets the speed.
+- **Adaptive triggers:** R2 feels like the gun in hand: a clean break for pistols, a heavy pull for
+  the shotgun and launchers, a long one for the sniper rifle and Farsight, a buzz while an automatic
+  fires. L2 has a light stop for aiming. Every shot also rumbles. `Input.PS5AdaptiveTriggers=0`
+  turns the triggers off.
+- **5.1 surround:** with Sound Mode set to Surround, the game sends six channels straight to the
+  PS5's audio out, which hands them to a receiver as 5.1 or mixes them for a TV or the console's 3D
+  audio on headphones. **Headphone Surround** (`Audio.SurroundOutput=3`) is the game's own mix
+  for a stereo headset instead.
+- **Rest mode:** the game picks up where it was when the console wakes, rather than running the
+  minutes it slept in one step. An online match does not survive it.
 - **The PS5's keyboard** opens for every text field: the online name and PIN, chat and the
   menus' keyboard.
 - **A GoldenEye tile:** `PPSA64008` is the same game installed as a second title that opens
@@ -47,6 +57,21 @@ Everything the game writes (settings in `pd.ini`, saves, the log) stays in that 
   decoded textures (`Mod.TexturePackCacheMB`) instead of 512 MB.
 - **A shader cache** built on a PC (`vulkan-shaders.bin`), so the first visit to each level
   compiles fewer shaders.
+
+## From a Mac (or any PC)
+
+Two tools sit beside the title folders. On a Mac, double-click them (the first time, right-click
+and Open); elsewhere, run them in a terminal. Each asks for the PS5's address and FTP port once
+(the one the jailbreak's FTP server shows) and remembers it.
+
+- **`ps5-push.command`** sends the title folders over the network: the first time everything,
+  after that the game's own files and anything new (a ROM, a texture pack). It never touches the
+  console's saves or settings.
+- **`ps5-sync-saves.command`** keeps the saves (agent files, unlocks, Combat Simulator setups,
+  GoldenEye's best times) the same on the PS5 and a PC copy of the same build. Close the game on
+  both first. A save changed in one place goes everywhere; changed in both, the newest wins (you
+  pick, in a terminal), and everything replaced is kept in the PC save folder's `.ps5-sync/backups`.
+  Give it the PC copy's save folder (`save dir` in its `pd.log`) if it does not find it.
 
 ## HD textures
 
@@ -88,7 +113,7 @@ docker build -t pd-ps5-build docker
 ./build.sh
 tools/check-imports.sh           # every import comes from a usable system module
 tools/package.sh                 # dist/PPSA64007
-tools/upload.sh                  # PS5_HOST=<ip>:<port> to /data/homebrew over FTP
+tools/upload.sh                  # dist/ to /data/homebrew over FTP (tools/ps5-push.command)
 tools/gen-shader-cache.sh <dir>  # vulkan-shaders.bin from a Linux build of the same commit
 ```
 
