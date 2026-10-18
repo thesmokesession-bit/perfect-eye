@@ -24,7 +24,7 @@ ls -d PPSA6400[78] >/dev/null 2>&1 || { echo "no PPSA64007 or PPSA64008 folder i
 
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 url() { local p=${1// /%20}; p=${p//#/%23}; echo "ftp://$host$dir/${p//\?/%3F}"; }
-always='^[^/]*/(eboot\.bin|cacert\.pem|vulkan-shaders\.bin|README\.md|sce_sys/.*|sce_module/.*)$'
+always='^[^/]*/(eboot\.bin|cacert\.pem|vulkan-shaders\.bin|mod-catalogue\.txt|README\.md|sce_sys/.*|sce_module/.*)$'
 never='(^|/)(eeprom\.bin|pd\.ini|pd\.log|[^/]*-times\.txt|\.[^/]*)$'
 
 # The console's FTP server can refuse to overwrite a file (550), so each file goes up under a

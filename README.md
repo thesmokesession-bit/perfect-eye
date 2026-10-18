@@ -26,8 +26,7 @@ Everything the game writes (settings in `pd.ini`, saves, the log) stays in that 
 ## What the PS5 build adds
 
 - **120 fps** on a TV that takes the PS5's 120 Hz output (the title declares it in
-  `param.json`). The game's tick rate is uncapped there; `Video.PS5HighFrameRate=0` in
-  `pd.ini` turns that off. On a 60 Hz TV it runs at 60.
+  `param.json`), in Performance mode. On a 60 Hz TV it runs at 60.
 - **Updates from the game:** **Check for Updates** on the Perfect Menu (and a notice there when one is out) fetches the newest
   PS5 build from this repo's `ps5-dev` release, which follows Dab's Mod's dev builds (see
   `.github/workflows/follow-dabs-mod.yml`). Quit and start it again from the home screen to run it.
@@ -47,8 +46,17 @@ Everything the game writes (settings in `pd.ini`, saves, the log) stays in that 
   PS5's audio out, which hands them to a receiver as 5.1 or mixes them for a TV or the console's 3D
   audio on headphones. **Headphone Surround** (`Audio.SurroundOutput=3`) is the game's own mix
   for a stereo headset instead.
+- **Quality and Performance:** Quality draws at the TV's full resolution at 60 fps; Performance
+  draws at two thirds of it, sharpened back up with FSR 1, at 120 fps on a 120 Hz TV.
+  `Video.PS5DisplayMode` (0 or 1); until it is chosen, a 120 Hz TV gets Performance.
+- **A settings page at the first start** with the display mode, texture pack, gyro and adaptive
+  triggers in one place. It is **Extended Options → PS5** afterwards.
 - **Rest mode:** the game picks up where it was when the console wakes, rather than running the
   minutes it slept in one step. An online match does not survive it.
+- **Get Mods and Maps:** a page under **Perfect Dark Mods** that downloads mods and Combat
+  Simulator maps straight into `mods/`, where the game unpacks and imports them as usual. The
+  list is `assets/mod-catalogue.txt` in this repo (one mod a line), which the game reads from the
+  `ps5-dev` release, so a mod added there reaches every console without a new build.
 - **The PS5's keyboard** opens for every text field: the online name and PIN, chat and the
   menus' keyboard.
 - **A GoldenEye tile:** `PPSA64008` is the same game installed as a second title that opens
@@ -96,6 +104,9 @@ for the Xbox 360 release's models, which need that release in `added-content/`.
 code addresses on the stack (match them to `eboot.bin.elf` with `llvm-symbolizer`).
 
 ## Not on the PS5
+
+- HDR: the display layer (Mihawk's VideoOut WSI) only offers an 8-bit SDR surface, and the
+  game's art is SDR. The PS5 already shows an SDR picture correctly on an HDR TV.
 
 - Video recording: use the controller's Create button.
 - The Create and PS buttons belong to the system and do not reach the game.

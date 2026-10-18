@@ -3,10 +3,12 @@
 # builds only when Dab's Mod's dev release names a commit this repo has not built,
 # and publishes to the rolling ps5-dev prerelease that the game's Check for Updates
 # reads (port/src/update.c, PLATFORM_PS5). No ROM, texture pack or game data is
-# ever built in or uploaded.
+# ever built in or uploaded. It also keeps the mod list (assets/mod-catalogue.txt) on that release.
 name: Follow Dab's Mod
 
 on:
+  push:
+    paths: [assets/mod-catalogue.txt]
   schedule:
     - cron: "17 */3 * * *"
   workflow_dispatch:
@@ -24,6 +26,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The game's Get Mods and Maps page reads this list from the release, so a mod
+  # added to assets/mod-catalogue.txt reaches every console without a new build.
+  catalogue:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          if gh release view ps5-dev >/dev/null 2>&1; then
+            gh release upload ps5-dev --clobber assets/mod-catalogue.txt
+          fi
+
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 340

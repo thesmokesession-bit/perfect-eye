@@ -522,10 +522,10 @@ index 0aebf703a..3e08a6dbd 100644
  			return recvLength;
  		}
 diff --git a/port/include/input.h b/port/include/input.h
-index a15376e4c..3872a5207 100644
+index a15376e4c..d6a01642a 100644
 --- a/port/include/input.h
 +++ b/port/include/input.h
-@@ -211,6 +211,14 @@ s32 inputGetKeyByName(const char *name);
+@@ -211,6 +211,16 @@ s32 inputGetKeyByName(const char *name);
  
  // get human-readable name from VK_ value
  const char *inputGetKeyName(s32 vk);
@@ -536,10 +536,27 @@ index a15376e4c..3872a5207 100644
 +// this frame in the mouse's units
 +s32 inputGyroActive(s32 cidx);
 +void inputGyroGetDelta(s32 cidx, f32 *dx, f32 *dy);
++extern s32 g_InputPs5Gyro;     // Input.PS5Gyro
++extern s32 g_InputPs5Triggers; // Input.PS5AdaptiveTriggers
 +#endif
  
  // get CK_ value from human-readable name
  s32 inputGetContKeyByName(const char *name);
+diff --git a/port/include/video.h b/port/include/video.h
+index 4fad217b1..a024b6652 100644
+--- a/port/include/video.h
++++ b/port/include/video.h
+@@ -205,4 +205,10 @@ void videoFreeCachedTextures(const void *start, const void *end);
+ void videoRestoreDesktop(void);
+ void videoShutdown(void);
+ 
++#ifdef PLATFORM_PS5
++s32 videoPs5Is120Hz(void);
++s32 videoPs5GetDisplayMode(void); // 0 Quality, 1 Performance
++void videoPs5SetDisplayMode(s32 performance);
++#endif
++
+ #endif
 diff --git a/port/src/audio.c b/port/src/audio.c
 index 616f6effc..a423cef7b 100644
 --- a/port/src/audio.c
@@ -741,7 +758,7 @@ index ecfb59a65..53a2a6281 100644
  	curl_easy_setopt(curl, CURLOPT_WRITEDATA, buf);
  	curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)(req->timeout > 0 ? req->timeout : GHOSTNET_TIMEOUT));
 diff --git a/port/src/input.c b/port/src/input.c
-index a5e75de49..ef3cb0f2b 100644
+index a5e75de49..b19be8c59 100644
 --- a/port/src/input.c
 +++ b/port/src/input.c
 @@ -13,6 +13,14 @@
@@ -912,7 +929,7 @@ index a5e75de49..ef3cb0f2b 100644
 +int sceUserServiceGetLoginUserIdList(int user_ids[4]);
 +int sceUserServiceGetUserName(int user_id, char *name, size_t size);
 +
-+static s32 gyroEnabled = 1;      // Input.PS5Gyro
++s32 g_InputPs5Gyro = 1;      // Input.PS5Gyro
 +static f32 gyroSpeed = 1.0f;     // Input.PS5GyroSpeed: 1 turns the view as far as the pad turns
 +static s32 gyroHandle[4] = { -1, -1, -1, -1 };
 +static SDL_GameController *gyroFor[4];
@@ -968,7 +985,7 @@ index a5e75de49..ef3cb0f2b 100644
 +			gyroHandle[i] = inputPs5GyroHandle(i);
 +		}
 +
-+		if (!gyroEnabled || gyroHandle[i] < 0) {
++		if (!g_InputPs5Gyro || gyroHandle[i] < 0) {
 +			continue;
 +		}
 +
@@ -1016,7 +1033,7 @@ index a5e75de49..ef3cb0f2b 100644
 +
 +s32 inputGyroActive(s32 cidx)
 +{
-+	return cidx >= 0 && cidx < 4 && gyroEnabled && gyroHandle[cidx] >= 0 && pads[cidx];
++	return cidx >= 0 && cidx < 4 && g_InputPs5Gyro && gyroHandle[cidx] >= 0 && pads[cidx];
 +}
 +
 +void inputGyroGetDelta(s32 cidx, f32 *dx, f32 *dy)
@@ -1079,7 +1096,7 @@ index a5e75de49..ef3cb0f2b 100644
 +
 +int scePadSetTriggerEffect(int handle, const Ps5TriggerEffect *param);
 +
-+static s32 adaptiveTriggers = 1; // Input.PS5AdaptiveTriggers
++s32 g_InputPs5Triggers = 1; // Input.PS5AdaptiveTriggers
 +
 +// mode and its first three bytes, for one trigger
 +typedef struct { u8 mode, a, b, c; } Ps5Trig;
@@ -1092,7 +1109,7 @@ index a5e75de49..ef3cb0f2b 100644
 +
 +	*l2 = *r2 = (Ps5Trig){ 0 };
 +
-+	if (!adaptiveTriggers || !pl || !pl->prop || pl->isdead || pl->pausemode || pl->activemenumode != AMMODE_CLOSED) {
++	if (!g_InputPs5Triggers || !pl || !pl->prop || pl->isdead || pl->pausemode || pl->activemenumode != AMMODE_CLOSED) {
 +		return;
 +	}
 +
@@ -1293,9 +1310,9 @@ index a5e75de49..ef3cb0f2b 100644
  {
  	configRegisterInt("Input.MouseEnabled", &mouseEnabled, 0, 1);
 +#ifdef PLATFORM_PS5
-+	configRegisterInt("Input.PS5Gyro", &gyroEnabled, 0, 1);
++	configRegisterInt("Input.PS5Gyro", &g_InputPs5Gyro, 0, 1);
 +	configRegisterFloat("Input.PS5GyroSpeed", &gyroSpeed, 0.1f, 5.0f);
-+	configRegisterInt("Input.PS5AdaptiveTriggers", &adaptiveTriggers, 0, 1);
++	configRegisterInt("Input.PS5AdaptiveTriggers", &g_InputPs5Triggers, 0, 1);
 +#endif
  	configRegisterInt("Input.MouseLockMode", &mouseLockMode, MLOCK_OFF, MLOCK_AUTO);
  	configRegisterFloat("Input.MouseSpeedX", &mouseSensX, -30.f, 30.f);
@@ -1344,6 +1361,383 @@ index 52d3fdc46..7988319ab 100644
  	g_StateHashEvery = sysArgGetInt("--state-hash", 0);
  	g_ShotFrame = sysArgGetInt("--screenshot-frame", 0);
  	g_AlarmAtFrame = sysArgGetInt("--alarm-at", 0);
+diff --git a/port/src/modmode.c b/port/src/modmode.c
+index 88752f3bc..7f69fc4be 100644
+--- a/port/src/modmode.c
++++ b/port/src/modmode.c
+@@ -57,6 +57,10 @@
+ #include "mpsetups.h"
+ #include "constants.h"
+ #include "bss.h"
++#include <stdlib.h>
++#include <SDL.h>
++#include "ghostnet.h"
++#include "sha256.h"
+ 
+ #define MODMODE_NAME_LEN 64
+ 
+@@ -534,6 +538,346 @@ static MenuDialogHandlerResult menudialogModMode(s32 operation, struct menudialo
+ 	return false;
+ }
+ 
++/*
++ * Get Mods and Maps: a catalogue of mods that each have a direct download, one
++ * per line as "name|author|file|https url|sha256 or nothing|blurb" ("\n" in
++ * the blurb breaks it). The newest copy is asked for from Perfect Eye's
++ * ps5-dev release when the build has one (PS5_UPDATE_REPO), else the one
++ * beside the game is read. A download lands in mods/ under its file name and
++ * the mod list unpacks and imports it there like an archive or a patch
++ * dropped in by hand.
++ */
++#define MODCAT_FILE "mod-catalogue.txt"
++#define MODCAT_MAX 64
++#define MODCAT_MAXBYTES (512u * 1024u * 1024u)
++
++struct modcatentry {
++	char name[48];
++	char author[48];
++	char file[96];
++	char url[384];
++	char sha[65];
++	char blurb[192];
++};
++
++static struct modcatentry s_Cat[MODCAT_MAX];
++static s32 s_CatCount = -1; // -1 until the page has looked once
++static struct modcatentry s_CatNew[MODCAT_MAX];
++static s32 s_CatNewCount;
++static char s_CatNote[256];
++static char s_CatMsg[192];
++static char s_CatRowText[96];
++static SDL_Thread *s_CatThread;
++static SDL_atomic_t s_CatDone;
++static s32 s_CatJob; // -1 the catalogue, else the entry being downloaded
++static s32 s_CatOk;
++static volatile s32 s_CatCancel;
++static struct ghostnetbuf s_CatBuf;
++static char s_CatTmp[FS_MAXPATH + 1];
++static char s_CatDest[FS_MAXPATH + 1];
++
++static void modCatCopyField(char *dst, u32 dstsize, const char *src, u32 len)
++{
++	u32 o = 0;
++
++	for (u32 i = 0; i < len && o + 1 < dstsize; i++) {
++		if (src[i] == '\\' && i + 1 < len && src[i + 1] == 'n') {
++			dst[o++] = '\n';
++			i++;
++		} else if (src[i] != '\r') {
++			dst[o++] = src[i];
++		}
++	}
++
++	dst[o] = '\0';
++}
++
++// The catalogue's text into out; returns how many entries it holds
++static s32 modCatParse(const char *text, struct modcatentry *out)
++{
++	s32 count = 0;
++
++	while (text && *text && count < MODCAT_MAX) {
++		const char *end = strchr(text, '\n');
++		const char *f[7];
++		u32 len = end ? (u32)(end - text) : (u32)strlen(text);
++		s32 n = 1;
++		struct modcatentry *e = &out[count];
++
++		f[0] = text;
++
++		for (u32 i = 0; i < len && n < 6; i++) {
++			if (text[i] == '|') {
++				f[n++] = text + i + 1;
++			}
++		}
++
++		f[n] = text + len + 1;
++
++		if (n == 6 && text[0] != '#') {
++			modCatCopyField(e->name, sizeof(e->name), f[0], f[1] - f[0] - 1);
++			modCatCopyField(e->author, sizeof(e->author), f[1], f[2] - f[1] - 1);
++			modCatCopyField(e->file, sizeof(e->file), f[2], f[3] - f[2] - 1);
++			modCatCopyField(e->url, sizeof(e->url), f[3], f[4] - f[3] - 1);
++			modCatCopyField(e->sha, sizeof(e->sha), f[4], f[5] - f[4] - 1);
++			modCatCopyField(e->blurb, sizeof(e->blurb), f[5], f[6] - f[5] - 1);
++
++			// a name for a file in mods/ and nothing else, over https
++			if (e->name[0] && e->file[0] && e->file[0] != '.' && !strpbrk(e->file, "/\\:")
++					&& !strncmp(e->url, "https://", 8) && (!e->sha[0] || strlen(e->sha) == 64)) {
++				count++;
++			}
++		}
++
++		text = end ? end + 1 : NULL;
++	}
++
++	return count;
++}
++
++static int modCatWorker(void *arg)
++{
++	struct ghostnetreq req;
++	s32 status = 0;
++	char sha[65];
++
++	memset(&req, 0, sizeof(req));
++	req.redirect = true;
++	req.cancel = &s_CatCancel;
++	s_CatMsg[0] = '\0';
++	s_CatOk = 0;
++
++	if (s_CatJob < 0) {
++#ifdef PS5_UPDATE_REPO
++		struct ghostnetbuf buf = { NULL, 0 };
++
++		req.url = PS5_UPDATE_REPO "/download/ps5-dev/" MODCAT_FILE;
++
++		if (ghostnetSend(&req, &buf, &status, s_CatMsg, sizeof(s_CatMsg)) && status == 200 && buf.data) {
++			s_CatNewCount = modCatParse(buf.data, s_CatNew);
++			s_CatOk = s_CatNewCount > 0;
++		}
++
++		free(buf.data);
++#endif
++	} else {
++		const struct modcatentry *e = &s_Cat[s_CatJob];
++		FILE *f = fopen(s_CatTmp, "wb");
++
++		if (!f) {
++			snprintf(s_CatMsg, sizeof(s_CatMsg), "cannot write to the mods folder");
++		} else {
++			req.url = e->url;
++			req.timeout = 3600;
++			memset(&s_CatBuf, 0, sizeof(s_CatBuf));
++			s_CatBuf.sink = f;
++			s_CatBuf.maxlen = MODCAT_MAXBYTES;
++
++			const bool sent = ghostnetSend(&req, &s_CatBuf, &status, s_CatMsg, sizeof(s_CatMsg));
++			fclose(f);
++
++			if (!sent) {
++				// s_CatMsg says why
++			} else if (s_CatCancel) {
++				snprintf(s_CatMsg, sizeof(s_CatMsg), "stopped");
++			} else if (status != 200) {
++				snprintf(s_CatMsg, sizeof(s_CatMsg), "the download answered %d", status);
++			} else if (e->sha[0] && (!sha256File(s_CatTmp, sha) || strcasecmp(sha, e->sha))) {
++				snprintf(s_CatMsg, sizeof(s_CatMsg), "the download is not the file the list describes");
++			} else if (rename(s_CatTmp, s_CatDest) != 0) {
++				snprintf(s_CatMsg, sizeof(s_CatMsg), "cannot write to the mods folder");
++			} else {
++				s_CatOk = 1;
++			}
++
++			if (!s_CatOk) {
++				remove(s_CatTmp);
++			}
++		}
++	}
++
++	SDL_AtomicSet(&s_CatDone, 1);
++
++	return 0;
++}
++
++static s32 modCatBusy(void)
++{
++	return s_CatThread != NULL;
++}
++
++static s32 modCatInstalled(s32 i)
++{
++	char path[FS_MAXPATH + 1];
++
++	snprintf(path, sizeof(path), "$E/mods/%s", s_Cat[i].file);
++
++	return fsFileSize(path) >= 0;
++}
++
++static void modCatStart(s32 job)
++{
++	s_CatJob = job;
++	s_CatCancel = 0;
++	SDL_AtomicSet(&s_CatDone, 0);
++
++	if (job >= 0) {
++		// the paths here, on the game thread: fsFullPath's buffer is not the worker's to share
++		fsCreateDir("$E/mods");
++		snprintf(s_CatDest, sizeof(s_CatDest), "%s", fsFullPath("$E/mods"));
++		snprintf(s_CatTmp, sizeof(s_CatTmp), "%s/.%s.part", s_CatDest, s_Cat[job].file);
++		snprintf(s_CatDest + strlen(s_CatDest), sizeof(s_CatDest) - strlen(s_CatDest), "/%s", s_Cat[job].file);
++	}
++
++	s_CatThread = SDL_CreateThread(modCatWorker, "modcatalogue", NULL);
++}
++
++// Once a frame while the page is up: the worker's result, when it has one
++static void modCatTick(void)
++{
++	if (!s_CatThread || !SDL_AtomicGet(&s_CatDone)) {
++		return;
++	}
++
++	SDL_WaitThread(s_CatThread, NULL);
++	s_CatThread = NULL;
++
++	if (s_CatJob < 0) {
++		if (s_CatOk) {
++			memcpy(s_Cat, s_CatNew, sizeof(s_Cat));
++			s_CatCount = s_CatNewCount;
++		}
++		s_CatNote[0] = '\0';
++	} else if (s_CatOk) {
++		sysLogPrintf(LOG_NOTE, "mods: downloaded %s to %s", s_Cat[s_CatJob].name, s_CatDest);
++		modListRefresh(); // unpacks it and imports a patch in it
++		snprintf(s_CatNote, sizeof(s_CatNote), "%s is installed.\nPlay it from Perfect Dark Mods.\n", s_Cat[s_CatJob].name);
++	} else {
++		sysLogPrintf(LOG_WARNING, "mods: %s did not download: %s", s_Cat[s_CatJob].name, s_CatMsg);
++		snprintf(s_CatNote, sizeof(s_CatNote), "%s did not download:\n%s\n", s_Cat[s_CatJob].name, s_CatMsg);
++	}
++}
++
++static MenuItemHandlerResult menuhandlerModCatList(s32 operation, struct menuitem *item, union handlerdata *data)
++{
++	const s32 i = (s32)data->list.value;
++
++	switch (operation) {
++	case MENUOP_GETOPTIONCOUNT:
++		data->list.value = s_CatCount > 0 ? s_CatCount : 0;
++		break;
++	case MENUOP_GETOPTIONTEXT:
++		snprintf(s_CatRowText, sizeof(s_CatRowText), "%s%s\n", s_Cat[i].name, modCatInstalled(i) ? " (installed)" : "");
++		return (intptr_t)s_CatRowText;
++	case MENUOP_GETSELECTEDINDEX:
++	case MENUOP_GETOPTGROUPCOUNT:
++		data->list.value = 0;
++		break;
++	case MENUOP_GETOPTGROUPTEXT:
++		return (intptr_t)"";
++	case MENUOP_GETGROUPSTARTINDEX:
++		data->list.groupstartindex = 0;
++		break;
++	case MENUOP_LISTITEMFOCUS:
++		if (!modCatBusy() && i >= 0 && i < s_CatCount) {
++			snprintf(s_CatNote, sizeof(s_CatNote), "by %s\n%s\n", s_Cat[i].author, s_Cat[i].blurb);
++		}
++		break;
++	case MENUOP_SET:
++		if (modCatBusy() || i < 0 || i >= s_CatCount) {
++			break;
++		}
++
++		if (modCatInstalled(i)) {
++			snprintf(s_CatNote, sizeof(s_CatNote), "%s is installed.\nPlay it from Perfect Dark Mods.\n", s_Cat[i].name);
++		} else {
++			modCatStart(i);
++		}
++		break;
++	}
++
++	return 0;
++}
++
++static char *menutextModCatNote(struct menuitem *item)
++{
++	modCatTick();
++
++	if (modCatBusy() && s_CatJob >= 0) {
++		const u32 done = (u32)s_CatBuf.len;
++
++		snprintf(s_CatNote, sizeof(s_CatNote), "Downloading %s\n%u.%u MB (Back stops it)\n",
++				s_Cat[s_CatJob].name, done / 1048576, (done % 1048576) * 10 / 1048576);
++	} else if (modCatBusy()) {
++		return "Looking for mods...\n";
++	} else if (s_CatCount <= 0) {
++		return "No mod list. Mods go in the mods folder.\n";
++	} else if (!s_CatNote[0]) {
++		return "Choose a mod to download it.\n";
++	}
++
++	return s_CatNote;
++}
++
++static MenuDialogHandlerResult menudialogModCat(s32 operation, struct menudialogdef *dialogdef, union handlerdata *data)
++{
++	if (operation == MENUOP_OPEN && !modCatBusy()) {
++		// fsFileLoad ends what it reads with a '\0'
++		char *text = fsFileSize("$E/" MODCAT_FILE) > 0 ? fsFileLoad("$E/" MODCAT_FILE, NULL) : NULL;
++
++		if (text) {
++			s_CatCount = modCatParse(text, s_Cat);
++			sysMemFree(text);
++		} else if (s_CatCount < 0) {
++			s_CatCount = 0;
++		}
++
++		s_CatNote[0] = '\0';
++		modCatStart(-1); // the newer list, when there is one
++	} else if (operation == MENUOP_CLOSE && modCatBusy()) {
++		s_CatCancel = 1;
++	}
++
++	return false;
++}
++
++static struct menuitem g_ModCatMenuItems[] = {
++	{
++		MENUITEMTYPE_LABEL,
++		0,
++		MENUITEMFLAG_LESSLEFTPADDING | MENUITEMFLAG_SMALLFONT,
++		(uintptr_t)&menutextModCatNote,
++		0,
++		NULL,
++	},
++	{
++		MENUITEMTYPE_LIST,
++		0,
++		MENUITEMFLAG_LIST_LEAVEATENDS,
++		0x000000d0,
++		0x0000008c,
++		menuhandlerModCatList,
++	},
++	{
++		MENUITEMTYPE_SELECTABLE,
++		0,
++		MENUITEMFLAG_SELECTABLE_CLOSESDIALOG,
++		L_OPTIONS_213, // "Back"
++		0,
++		NULL,
++	},
++	{ MENUITEMTYPE_END },
++};
++
++static struct menudialogdef g_ModCatMenuDialog = {
++	MENUDIALOGTYPE_DEFAULT,
++	(uintptr_t)"Get Mods and Maps",
++	g_ModCatMenuItems,
++	menudialogModCat,
++	MENUDIALOGFLAG_LITERAL_TEXT,
++	NULL,
++};
++
+ static struct menuitem g_ModModeMenuItems[] = {
+ 	{
+ 		MENUITEMTYPE_LABEL,
+@@ -553,6 +897,14 @@ static struct menuitem g_ModModeMenuItems[] = {
+ 		0x0000008c,
+ 		menuhandlerModModeList,
+ 	},
++	{
++		MENUITEMTYPE_SELECTABLE,
++		0,
++		MENUITEMFLAG_SELECTABLE_OPENSDIALOG,
++		(uintptr_t)"Get Mods and Maps...\n",
++		0,
++		(void *)&g_ModCatMenuDialog,
++	},
+ 	{
+ 		MENUITEMTYPE_SELECTABLE,
+ 		0,
 diff --git a/port/src/net/nettransport.c b/port/src/net/nettransport.c
 index 3842267e4..79d52900f 100644
 --- a/port/src/net/nettransport.c
@@ -1361,7 +1755,7 @@ index 3842267e4..79d52900f 100644
  #include <stdlib.h>
  #include <stdio.h>
 diff --git a/port/src/optionsmenu.c b/port/src/optionsmenu.c
-index 76cceaa09..e6dbe6b83 100644
+index 76cceaa09..f63f5ca1c 100644
 --- a/port/src/optionsmenu.c
 +++ b/port/src/optionsmenu.c
 @@ -2620,7 +2620,7 @@ static MenuItemHandlerResult menuhandlerBind(s32 operation, struct menuitem *ite
@@ -1391,6 +1785,165 @@ index 76cceaa09..e6dbe6b83 100644
  			keyname[sizeof(keyname) - 1] = '\0';
  			for (char *p = keyname; *p; ++p) {
  				if (*p == '_') *p = ' ';
+@@ -7928,7 +7928,158 @@ struct menudialogdef g_ExtendedAdvancedMenuDialog = {
+ 	NULL,
+ };
+ 
++#ifdef PLATFORM_PS5
++/**
++ * The PS5's settings in one place: shown once at the first start (from the
++ * Perfect Menu's first tick, mainmenu.c) and afterwards as Extended Options ->
++ * PS5. Display mode, texture pack, gyro and adaptive triggers.
++ */
++s32 g_Ps5SetupDone = 0; // Ps5.SetupDone
++
++static char *menutextPs5SetupNote(struct menuitem *item)
++{
++	return videoPs5Is120Hz()
++		? "How the game looks and plays on this PS5.\nAll of it can be changed later under\nExtended Options, PS5.\n"
++		: "How the game looks and plays on this PS5.\nThe TV is at 60 Hz: 120 fps needs a 120 Hz\nTV and the PS5's 120 Hz output turned on.\n";
++}
++
++static MenuItemHandlerResult menuhandlerPs5DisplayMode(s32 operation, struct menuitem *item, union handlerdata *data)
++{
++	static const char *opts[] = {
++		"Quality (sharpest, 60 fps)",
++		"Performance (120 fps)",
++	};
++
++	switch (operation) {
++	case MENUOP_GETOPTIONCOUNT:
++		data->dropdown.value = ARRAYCOUNT(opts);
++		break;
++	case MENUOP_GETOPTIONTEXT:
++		return (intptr_t)opts[data->dropdown.value];
++	case MENUOP_SET:
++		videoPs5SetDisplayMode(data->dropdown.value);
++		break;
++	case MENUOP_GETSELECTEDINDEX:
++		data->dropdown.value = videoPs5GetDisplayMode();
++	}
++
++	return 0;
++}
++
++static MenuItemHandlerResult menuhandlerPs5Gyro(s32 operation, struct menuitem *item, union handlerdata *data)
++{
++	switch (operation) {
++	case MENUOP_GET:
++		return g_InputPs5Gyro;
++	case MENUOP_SET:
++		g_InputPs5Gyro = data->checkbox.value;
++		break;
++	}
++
++	return 0;
++}
++
++static MenuItemHandlerResult menuhandlerPs5Triggers(s32 operation, struct menuitem *item, union handlerdata *data)
++{
++	switch (operation) {
++	case MENUOP_GET:
++		return g_InputPs5Triggers;
++	case MENUOP_SET:
++		g_InputPs5Triggers = data->checkbox.value;
++		break;
++	}
++
++	return 0;
++}
++
++static MenuDialogHandlerResult menudialogPs5Setup(s32 operation, struct menudialogdef *dialogdef, union handlerdata *data)
++{
++	if (operation == MENUOP_CLOSE && !g_Ps5SetupDone) {
++		g_Ps5SetupDone = 1;
++		configSave(CONFIG_PATH);
++	}
++
++	return false;
++}
++
++static struct menuitem g_Ps5SetupMenuItems[] = {
++	{
++		MENUITEMTYPE_LABEL,
++		0,
++		MENUITEMFLAG_LESSLEFTPADDING | MENUITEMFLAG_SMALLFONT,
++		(uintptr_t)&menutextPs5SetupNote,
++		0,
++		NULL,
++	},
++	{
++		MENUITEMTYPE_DROPDOWN,
++		0,
++		MENUITEMFLAG_LITERAL_TEXT,
++		(uintptr_t)"Display Mode",
++		0,
++		menuhandlerPs5DisplayMode,
++	},
++	{
++		MENUITEMTYPE_DROPDOWN,
++		0,
++		MENUITEMFLAG_LITERAL_TEXT,
++		(uintptr_t)"Texture Pack",
++		0,
++		menuhandlerTexturePack,
++	},
++	{
++		MENUITEMTYPE_CHECKBOX,
++		0,
++		MENUITEMFLAG_LITERAL_TEXT,
++		(uintptr_t)"Gyro Aiming",
++		0,
++		menuhandlerPs5Gyro,
++	},
++	{
++		MENUITEMTYPE_CHECKBOX,
++		0,
++		MENUITEMFLAG_LITERAL_TEXT,
++		(uintptr_t)"Adaptive Triggers",
++		0,
++		menuhandlerPs5Triggers,
++	},
++	{
++		MENUITEMTYPE_SELECTABLE,
++		0,
++		MENUITEMFLAG_SELECTABLE_CLOSESDIALOG | MENUITEMFLAG_LITERAL_TEXT,
++		(uintptr_t)"Done\n",
++		0,
++		NULL,
++	},
++	{ MENUITEMTYPE_END },
++};
++
++struct menudialogdef g_Ps5SetupMenuDialog = {
++	MENUDIALOGTYPE_DEFAULT,
++	(uintptr_t)"PS5 Settings",
++	g_Ps5SetupMenuItems,
++	menudialogPs5Setup,
++	MENUDIALOGFLAG_LITERAL_TEXT,
++	NULL,
++};
++
++PD_CONSTRUCTOR static void ps5SetupConfigInit(void)
++{
++	configRegisterInt("Ps5.SetupDone", &g_Ps5SetupDone, 0, 1);
++}
++#endif
++
+ struct menuitem g_ExtendedMenuItems[] = {
++#ifdef PLATFORM_PS5
++	{
++		MENUITEMTYPE_SELECTABLE,
++		0,
++		MENUITEMFLAG_SELECTABLE_OPENSDIALOG | MENUITEMFLAG_LITERAL_TEXT,
++		(uintptr_t)"PS5\n",
++		0,
++		(void *)&g_Ps5SetupMenuDialog,
++	},
++#endif
+ 	{
+ 		MENUITEMTYPE_SELECTABLE,
+ 		0,
 diff --git a/port/src/record.c b/port/src/record.c
 index b5b178af9..19caf8616 100644
 --- a/port/src/record.c
@@ -1651,10 +2204,10 @@ index 06123262a..d43711808 100644
  		break;
  	}
 diff --git a/port/src/video.c b/port/src/video.c
-index 1481b7a61..4b7068d4a 100644
+index 1481b7a61..21cc51dc9 100644
 --- a/port/src/video.c
 +++ b/port/src/video.c
-@@ -77,6 +77,14 @@ static s32 vidSupersampling = 0;
+@@ -77,6 +77,17 @@ static s32 vidSupersampling = 0;
  static s32 vidTaa = 0;
  static const f32 vidSupersamplingScales[VIDEO_SUPERSAMPLING_COUNT] = { 1.f, 1.5f, 2.f };
  static s32 vidFramerateLimit = 0;
@@ -1662,14 +2215,17 @@ index 1481b7a61..4b7068d4a 100644
 +// 120 fps on a TV that takes the PS5's 120 Hz output: the game's tick rate
 +// uncapped (Extended Video Options, Uncap Tickrate) and paced by the display.
 +// Off keeps whatever the player set there.
-+static s32 vidPs5HighFrameRate = 1;
++// Video.PS5DisplayMode: 0 Quality (the display's resolution, 60 fps), 1
++// Performance (FSR from two thirds of it, 120 fps on a 120 Hz output), -1
++// until chosen: Performance on a 120 Hz output, else Quality
++static s32 vidPs5DisplayMode = -1;
 +extern int g_Ps5DisplayRefreshMhz;
 +extern s32 g_TickRateDiv;
 +#endif
  // Video.Renderer: VIDEO_RENDERER_OPENGL or VIDEO_RENDERER_VULKAN, taking
  // effect at the next start. vidRendererActive is what this run got, which is
  // OpenGL whenever Vulkan was asked for and could not start.
-@@ -276,6 +284,16 @@ s32 videoInit(void)
+@@ -276,6 +287,16 @@ s32 videoInit(void)
  	}
  	videoSetFsrSharpness(vidFsrSharpness);
  
@@ -1686,7 +2242,7 @@ index 1481b7a61..4b7068d4a 100644
  	struct GfxInitSettings set = {
  		.wapi = wmAPI,
  		.rapi = renderingAPI,
-@@ -297,6 +315,10 @@ s32 videoInit(void)
+@@ -297,6 +318,10 @@ s32 videoInit(void)
  
  #ifdef PD_HAVE_VULKAN
  	if (renderingAPI == &gfx_vulkan_api && gfx_vulkan_failed()) {
@@ -1697,31 +2253,59 @@ index 1481b7a61..4b7068d4a 100644
  		// The window goes and comes back for OpenGL; the setting is left as it
  		// is, so a driver installed later is picked up without visiting the menu
  		sysLogPrintf(LOG_WARNING, "VIDEO: Vulkan could not start, using OpenGL");
-@@ -311,6 +333,18 @@ s32 videoInit(void)
+@@ -311,6 +336,11 @@ s32 videoInit(void)
  
  	sysLogPrintf(LOG_NOTE, "VIDEO: renderer %s", renderingAPI->get_name());
  
 +#ifdef PLATFORM_PS5
-+	if (g_Ps5DisplayRefreshMhz > 100000) {
-+		if (vidPs5HighFrameRate) {
-+			g_TickRateDiv = 0;
-+		}
-+		sysLogPrintf(LOG_NOTE, "VIDEO: PS5 output at %d.%03d Hz, %s", g_Ps5DisplayRefreshMhz / 1000,
-+				g_Ps5DisplayRefreshMhz % 1000, vidPs5HighFrameRate ? "frame rate uncapped for 120 fps" : "Video.PS5HighFrameRate is off");
-+	} else {
-+		sysLogPrintf(LOG_NOTE, "VIDEO: PS5 output at %d.%03d Hz", g_Ps5DisplayRefreshMhz / 1000, g_Ps5DisplayRefreshMhz % 1000);
-+	}
++	sysLogPrintf(LOG_NOTE, "VIDEO: PS5 output at %d.%03d Hz", g_Ps5DisplayRefreshMhz / 1000, g_Ps5DisplayRefreshMhz % 1000);
++	videoPs5SetDisplayMode(vidPs5DisplayMode < 0 ? videoPs5Is120Hz() : vidPs5DisplayMode);
 +#endif
 +
  	videoInitDisplayModes();
  	videoSetVsync(vidVsync);
  	videoSetFramerateLimit(vidFramerateLimit);
-@@ -1349,6 +1383,9 @@ PD_CONSTRUCTOR static void videoConfigInit(void)
+@@ -1115,6 +1145,34 @@ void videoSetSmaa(s32 on)
+ 	gfx_post_smaa = vidSmaa;
+ }
+ 
++#ifdef PLATFORM_PS5
++s32 videoPs5Is120Hz(void)
++{
++	return g_Ps5DisplayRefreshMhz > 100000;
++}
++
++s32 videoPs5GetDisplayMode(void)
++{
++	return vidPs5DisplayMode > 0;
++}
++
++void videoPs5SetDisplayMode(s32 performance)
++{
++	vidPs5DisplayMode = !!performance;
++	g_TickRateDiv = performance && videoPs5Is120Hz() ? 0 : 1;
++
++	if (performance) {
++		videoSetUpscaling(VIDEO_UPSCALING_QUALITY);
++	} else if (vidUpscaling != VIDEO_UPSCALING_OFF) {
++		videoSetUpscaling(VIDEO_UPSCALING_OFF); // a supersampling choice stays
++	}
++
++	sysLogPrintf(LOG_NOTE, "VIDEO: PS5 %s mode: %s, %d fps", performance ? "Performance" : "Quality",
++			performance ? "FSR from two thirds of the resolution" : "full resolution",
++			g_TickRateDiv ? 60 : 120);
++}
++#endif
++
+ s32 videoGetUpscaling(void)
+ {
+ 	return vidUpscaling;
+@@ -1349,6 +1407,9 @@ PD_CONSTRUCTOR static void videoConfigInit(void)
  	configRegisterInt("Video.VSync", &vidVsync, -1, 10);
  	configRegisterInt("Video.FramebufferEffects", &vidFramebuffers, 0, 1);
  	configRegisterInt("Video.FramerateLimit", &vidFramerateLimit, 0, VIDEO_MAX_FPS);
 +#ifdef PLATFORM_PS5
-+	configRegisterInt("Video.PS5HighFrameRate", &vidPs5HighFrameRate, 0, 1);
++	configRegisterInt("Video.PS5DisplayMode", &vidPs5DisplayMode, -1, 1);
 +#endif
  	configRegisterInt("Video.DisplayFPS", &vidDisplayFPS, 0, 1);
  	configRegisterFloat("Video.DisplayFPSInterval", &vidDisplayFPSInterval, 0.01f, 32.f);
@@ -1756,28 +2340,33 @@ index 41fc439cd..e528c23f9 100644
  		allowmcross = (PLAYER_EXTCFG().mouseaimmode == MOUSEAIM_CLASSIC) && !aimlock &&
  			(movedata.freelookdx || movedata.freelookdy || g_Vars.currentplayer->swivelpos[0] || g_Vars.currentplayer->swivelpos[1]);
 diff --git a/src/game/mainmenu.c b/src/game/mainmenu.c
-index ea7811d68..6f0015e30 100644
+index ea7811d68..82cce358f 100644
 --- a/src/game/mainmenu.c
 +++ b/src/game/mainmenu.c
-@@ -5341,6 +5341,10 @@ MenuItemHandlerResult menuhandlerMainMenuCounterOperative(s32 operation, struct
+@@ -5341,6 +5341,12 @@ MenuItemHandlerResult menuhandlerMainMenuCounterOperative(s32 operation, struct
  	return 0;
  }
  
 +#ifdef PLATFORM_PS5
 +extern bool g_Ps5BootGoldenEye; // main.c: --ps5-goldeneye
++extern s32 g_Ps5SetupDone; // optionsmenu.c: the PS5 Settings page was seen once
++extern struct menudialogdef g_Ps5SetupMenuDialog;
 +#endif
 +
  MenuDialogHandlerResult menudialogMainMenu(s32 operation, struct menudialogdef *dialogdef, union handlerdata *data)
  {
  	switch (operation) {
-@@ -5359,6 +5363,21 @@ MenuDialogHandlerResult menudialogMainMenu(s32 operation, struct menudialogdef *
+@@ -5359,6 +5365,24 @@ MenuDialogHandlerResult menudialogMainMenu(s32 operation, struct menudialogdef *
  			updatenoticeMainMenuTick(dialogdef, data->dialog2.inputs, true);
  			// netplay: why the last net game ended
  			if (g_NetNoticePending || g_NetLobbyRoom) netMainMenuTick();
 +#ifdef PLATFORM_PS5
 +			// The PS5's GoldenEye tile (PPSA64008) goes straight into GoldenEye,
 +			// once, the way its Perfect Menu row does
-+			if (g_Ps5BootGoldenEye) {
++			// The first start's settings page first; GoldenEye opens when it closes
++			if (!g_Ps5SetupDone) {
++				menuPushDialog(&g_Ps5SetupMenuDialog);
++			} else if (g_Ps5BootGoldenEye) {
 +				g_Ps5BootGoldenEye = false;
 +
 +				if (!modModeIsActive() && gexPlusFirstArena() >= 0) {

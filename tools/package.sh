@@ -21,6 +21,8 @@ title() {
     cp "$sys"/{param.json,icon0.png,pic0.dds,pic1.dds} "$app/sce_sys/"
     cp "$radv/runtime/libc.prx" "$app/sce_module/libc.prx"
     cp "$root/assets/cacert.pem" "$app/cacert.pem"
+    # Get Mods and Maps' list until the release's newer one answers (port/src/modmode.c)
+    cp "$root/assets/mod-catalogue.txt" "$app/mod-catalogue.txt"
     # SPIR-V the Vulkan renderer would otherwise compile on first sight (tools/gen-shader-cache.sh)
     [[ -f $root/assets/vulkan-shaders.bin ]] && cp "$root/assets/vulkan-shaders.bin" "$app/vulkan-shaders.bin"
     printf '%s\n' "$note" > "$app/data/PUT YOUR ROM IN THE TITLE FOLDER.txt"
