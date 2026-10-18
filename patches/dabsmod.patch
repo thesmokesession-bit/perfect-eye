@@ -294,7 +294,7 @@ index 4c149b586..55c9dfb4b 100644
  };
  
 diff --git a/port/fast3d/gfx_vulkan.cpp b/port/fast3d/gfx_vulkan.cpp
-index 687f3fa7b..a1f0bce57 100644
+index 687f3fa7b..6d5cbeb67 100644
 --- a/port/fast3d/gfx_vulkan.cpp
 +++ b/port/fast3d/gfx_vulkan.cpp
 @@ -54,12 +54,28 @@
@@ -398,7 +398,80 @@ index 687f3fa7b..a1f0bce57 100644
          if (pr == VK_ERROR_OUT_OF_DATE_KHR || pr == VK_SUBOPTIMAL_KHR || r == VK_SUBOPTIMAL_KHR) {
              vk_swap_dirty_async = true;
          }
-@@ -1847,6 +1904,24 @@ static void vk_cache_save(void) {
+@@ -1817,36 +1874,83 @@ static void vk_cache_save_to(bool with_pipelines) {
+     }
+     vk_cache_dirty = false;
+ 
+-    FILE *f = fsFileOpenWrite(VK_SPV_CACHE_PATH);
+-    if (f) {
++    // Both files are put together in memory here and written out after: on the PS5 the
++    // write to the title folder took the best part of a frame, every time a new combiner
++    // had been seen (the console's stutters, 2026-10-18), so there it is a thread's job
++    std::vector<uint8_t> spv;
++    {
+         const uint64_t magic = VK_SPV_CACHE_MAGIC;
+-        fwrite(&magic, 8, 1, f);
++        auto put = [&](const void *p, size_t n) {
++            spv.insert(spv.end(), (const uint8_t *)p, (const uint8_t *)p + n);
++        };
++        put(&magic, 8);
+         for (const auto &e : vk_spv_cache) {
+             const uint32_t words = (uint32_t)e.second.size();
+-            fwrite(&e.first, 8, 1, f);
+-            fwrite(&words, 4, 1, f);
+-            fwrite(e.second.data(), 4, words, f);
++            put(&e.first, 8);
++            put(&words, 4);
++            put(e.second.data(), words * 4);
+         }
+-        fclose(f);
+     }
+ 
++    std::vector<uint8_t> pipelines;
+     size_t size = 0;
+     if (with_pipelines && vk_pipeline_cache && vkGetPipelineCacheData(vk_dev, vk_pipeline_cache, &size, NULL) == VK_SUCCESS && size) {
+-        std::vector<uint8_t> data(size);
+-        if (vkGetPipelineCacheData(vk_dev, vk_pipeline_cache, &size, data.data()) == VK_SUCCESS) {
+-            FILE *pf = fsFileOpenWrite(VK_PIPELINE_CACHE_PATH);
+-            if (pf) {
+-                fwrite(data.data(), 1, size, pf);
+-                fclose(pf);
+-            }
++        pipelines.resize(size);
++        if (vkGetPipelineCacheData(vk_dev, vk_pipeline_cache, &size, pipelines.data()) != VK_SUCCESS) {
++            pipelines.clear();
++        } else {
++            pipelines.resize(size);
+         }
+     }
++
++    std::string spvPath = fsFullPath(VK_SPV_CACHE_PATH);
++    std::string pipelinePath = fsFullPath(VK_PIPELINE_CACHE_PATH);
++    auto write = [](std::string path, std::vector<uint8_t> data) {
++        if (data.empty()) {
++            return;
++        }
++        FILE *f = fopen(path.c_str(), "wb");
++        if (f) {
++            fwrite(data.data(), 1, data.size(), f);
++            fclose(f);
++        }
++    };
++#if defined(__PROSPERO__)
++    // one at a time: a save while the last is still writing waits for it there, not here
++    static std::mutex &writing = *new std::mutex;
++    std::thread([write, spv = std::move(spv), pipelines = std::move(pipelines), spvPath, pipelinePath]() mutable {
++        std::lock_guard<std::mutex> hold(writing);
++        write(spvPath, std::move(spv));
++        write(pipelinePath, std::move(pipelines));
++    }).detach();
++#else
++    write(spvPath, std::move(spv));
++    write(pipelinePath, std::move(pipelines));
++#endif
+ }
+ 
+ static void vk_cache_save(void) {
      vk_cache_save_to(true);
  }
  
@@ -423,7 +496,7 @@ index 687f3fa7b..a1f0bce57 100644
  static void vk_drain(void);
  
  static void vk_cache_save_at_exit(void) {
-@@ -3538,6 +3613,8 @@ static bool vk_create_swapchain(void) {
+@@ -3538,6 +3642,8 @@ static bool vk_create_swapchain(void) {
      ci.imageFormat = vk_swap_format;
      ci.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
      ci.imageExtent = extent;
@@ -432,7 +505,7 @@ index 687f3fa7b..a1f0bce57 100644
      ci.imageArrayLayers = 1;
      ci.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
      ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-@@ -4054,7 +4131,7 @@ static void vk_grade_frame(void) {
+@@ -4054,7 +4160,7 @@ static void vk_grade_frame(void) {
   */
  static VkPipeline vk_post_pipelines[GFX_POST_NUM_PASSES];
  static bool vk_post_pipeline_failed[GFX_POST_NUM_PASSES];
@@ -441,7 +514,7 @@ index 687f3fa7b..a1f0bce57 100644
  static uint32_t vk_post_area_tex, vk_post_search_tex;
  static bool vk_post_failed;
  
-@@ -4180,6 +4257,10 @@ static bool gfx_vk_post_process(int fb_src, bool smaa, bool fsr, float sharpness
+@@ -4180,6 +4286,10 @@ static bool gfx_vk_post_process(int fb_src, bool smaa, bool fsr, float sharpness
      const uint32_t sw = in->width, sh = in->height;
      const bool scaled = sw != win.width || sh != win.height;
      bool ok = true;
@@ -452,7 +525,7 @@ index 687f3fa7b..a1f0bce57 100644
  
      if (smaa) {
          if (!vk_post_area_tex) {
-@@ -4191,7 +4272,7 @@ static bool gfx_vk_post_process(int fb_src, bool smaa, bool fsr, float sharpness
+@@ -4191,7 +4301,7 @@ static bool gfx_vk_post_process(int fb_src, bool smaa, bool fsr, float sharpness
          ok = ok && vk_post_draw(GFX_POST_SMAA_EDGES, vk_post_edges, in, NULL, NULL, 0, 0, 0.f, 0.f, true);
          ok = ok && vk_post_draw(GFX_POST_SMAA_WEIGHTS, vk_post_weights, &vk_post_edges, NULL, NULL,
                                  vk_post_slot(vk_post_area_tex), vk_post_slot(vk_post_search_tex), 0.f, 0.f, false);
@@ -461,7 +534,7 @@ index 687f3fa7b..a1f0bce57 100644
                                  0.f, 0.f, false);
          in = &vk_post_smaa_out;
      }
-@@ -4200,12 +4281,21 @@ static bool gfx_vk_post_process(int fb_src, bool smaa, bool fsr, float sharpness
+@@ -4200,12 +4310,21 @@ static bool gfx_vk_post_process(int fb_src, bool smaa, bool fsr, float sharpness
          if (fsr && vk_post_target(vk_post_easu, win.width, win.height) &&
              vk_post_draw(GFX_POST_EASU, vk_post_easu, in, NULL, NULL, 0, 0, (float)win.width, (float)win.height,
                           false)) {
@@ -486,7 +559,7 @@ index 687f3fa7b..a1f0bce57 100644
      }
  
      vk_bound_pipeline = VK_NULL_HANDLE;
-@@ -4578,8 +4668,12 @@ static PFN_vkGetInstanceProcAddr vk_load_loader_headless(void) {
+@@ -4578,8 +4697,12 @@ static PFN_vkGetInstanceProcAddr vk_load_loader_headless(void) {
  static bool vk_init_instance(SDL_Window *wnd, bool debug) {
      const bool headless = gfx_sdl_vulkan_headless() != 0;
  
@@ -499,7 +572,7 @@ index 687f3fa7b..a1f0bce57 100644
      if (!vk_get_instance_proc) {
          vk_fail("no Vulkan loader: %s", SDL_GetError());
          return false;
-@@ -4595,12 +4689,22 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
+@@ -4595,12 +4718,22 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
      if (vk_enumerate_instance_version) {
          vk_enumerate_instance_version(&loader_version);
      }
@@ -522,7 +595,7 @@ index 687f3fa7b..a1f0bce57 100644
      if (headless) {
          uint32_t count = 0;
          vkEnumerateInstanceExtensionProperties(NULL, &count, NULL);
-@@ -4623,6 +4727,7 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
+@@ -4623,6 +4756,7 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
          exts.resize(n);
          SDL_Vulkan_GetInstanceExtensions(wnd, &n, exts.data());
      }
@@ -530,7 +603,7 @@ index 687f3fa7b..a1f0bce57 100644
  
      std::vector<const char *> layers;
      if (debug) {
-@@ -4688,6 +4793,64 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
+@@ -4688,6 +4822,64 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
          }
      }
  
@@ -595,7 +668,7 @@ index 687f3fa7b..a1f0bce57 100644
      if (headless) {
          // The swapchain takes the window's size (currentExtent is undefined
          // on a headless surface) and is read back like any other
-@@ -4707,6 +4870,7 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
+@@ -4707,6 +4899,7 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
          vk_surface = VK_NULL_HANDLE;
          return false;
      }
@@ -3960,3 +4033,33 @@ index 79a1864e8..ffa387037 100644
  #elif defined(__SWITCH__)
  	#define PLATFORM_POSIX 1
  	#define PLATFORM_NSWITCH 1
+diff --git a/src/lib/audiomgr.c b/src/lib/audiomgr.c
+index 7791798de..094109929 100644
+--- a/src/lib/audiomgr.c
++++ b/src/lib/audiomgr.c
+@@ -321,6 +321,16 @@ void amgrHandleDoneMsg(AudioInfo *info)
+ }
+ 
+ #ifndef PLATFORM_N64
++// How much mixed sound is kept queued, in samples: past it a frame mixes one naudio frame and
++// short of it two. On the PS5 a frame that came late (90 ms and more, the log's hitch lines)
++// had run the queue dry and the sound broke up with the picture, so it keeps about 90 ms
++// there rather than about 50
++#ifdef PLATFORM_PS5
++#define AMGR_QUEUE_TARGET 2048
++#else
++#define AMGR_QUEUE_TARGET 1100
++#endif
++
+ void amgrFrame(void)
+ {
+ 	static AudioInfo *previnfo = NULL;
+@@ -340,7 +350,7 @@ void amgrFrame(void)
+ 		osAiSetNextBuffer(previnfo->data, previnfo->frameSamples * 4);
+ 	}
+ 
+-	if (somevalue > 1100 && var8005cf94 == 0) {
++	if (somevalue > AMGR_QUEUE_TARGET && var8005cf94 == 0) {
+ 		// already a lot queued, render 1 naudio frame (184 samples) this frame
+ 		info->frameSamples = 184;
+ 		var8005cf94 = 2;

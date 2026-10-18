@@ -85,6 +85,22 @@ static void *log_flusher(void *arg)
 	return NULL;
 }
 
+static int log_pipe_in = -1, log_file = -1;
+
+static void *log_writer(void *arg)
+{
+	static char chunk[16384];
+	(void)arg;
+	for (;;) {
+		const ssize_t n = read(log_pipe_in, chunk, sizeof(chunk));
+		if (n > 0) {
+			(void)write(log_file, chunk, (size_t)n);
+		} else if (n == 0) {
+			return NULL;
+		}
+	}
+}
+
 static void open_log(void)
 {
 	FILE *truncate = fopen(LOG_PATH, "w");
@@ -98,6 +114,27 @@ static void open_log(void)
 	log_fd = fileno(stdout);
 	if (freopen(LOG_PATH, "a", stderr)) {
 		setvbuf(stderr, stderr_buffer, _IOFBF, sizeof(stderr_buffer));
+	}
+	/* stdout and stderr then go into a pipe and a thread of their own writes the pipe to the
+	 * file: a flush held stdio's lock through the slow write, and the game's thread logging a
+	 * line meanwhile waited for it (stutters, 2026-10-18). Without a pipe, as it was. */
+	{
+		int fds[2];
+		const int file = open(LOG_PATH, O_WRONLY | O_APPEND);
+		pthread_t writer;
+		if (file >= 0 && pipe(fds) == 0) {
+			log_pipe_in = fds[0];
+			log_file = file;
+			if (pthread_create(&writer, NULL, log_writer, NULL) == 0) {
+				pthread_detach(writer);
+				fflush(stdout);
+				fflush(stderr);
+				dup2(fds[1], fileno(stdout));
+				dup2(fds[1], fileno(stderr));
+				close(fds[1]);
+				log_fd = file;
+			}
+		}
 	}
 	pthread_t thread;
 	if (pthread_create(&thread, NULL, log_flusher, NULL) == 0) {
@@ -452,10 +489,13 @@ void *ps5SystemSym(int handle, const char *name)
 /* getaddrinfo for the title (link-title.sh binds the name here): numbers as they are, names
  * through the console's resolver in libSceNet. The SDK's own only fails ("Could not resolve
  * hostname" for the lobby, 2026-10-18). IPv4 answers; an IPv6 request gets them mapped. */
-int sceNetPoolCreate(const char *name, int size, int flags) __attribute__((weak));
-int sceNetResolverCreate(const char *name, int memid, int flags) __attribute__((weak));
-int sceNetResolverStartNtoa(int rid, const char *hostname, uint32_t *addr, int timeout, int retry, int flags) __attribute__((weak));
-int sceNetResolverDestroy(int rid) __attribute__((weak));
+/* Plain imports: weak ones were never bound (each came back NULL, 2026-10-18). Each is read
+ * through a volatile pointer, so an import the console leaves unresolved is a failed lookup
+ * rather than a call to address 0. */
+int sceNetPoolCreate(const char *name, int size, int flags);
+int sceNetResolverCreate(const char *name, int memid, int flags);
+int sceNetResolverStartNtoa(int rid, const char *hostname, uint32_t *addr, int timeout, int retry, int flags);
+int sceNetResolverDestroy(int rid);
 
 static int resolve_name(const char *name, struct in_addr *out)
 {
@@ -465,24 +505,33 @@ static int resolve_name(const char *name, struct in_addr *out)
 		out->s_addr = htonl(INADDR_LOOPBACK);
 		return 0;
 	}
-	if (!sceNetPoolCreate || !sceNetResolverCreate || !sceNetResolverStartNtoa || !sceNetResolverDestroy) {
-		printf("PS5: no resolver to look up %s\n", name);
+	int (*volatile poolCreate)(const char *, int, int) = sceNetPoolCreate;
+	int (*volatile resolverCreate)(const char *, int, int) = sceNetResolverCreate;
+	int (*volatile startNtoa)(int, const char *, uint32_t *, int, int, int) = sceNetResolverStartNtoa;
+	int (*volatile resolverDestroy)(int) = sceNetResolverDestroy;
+	if (!poolCreate || !resolverCreate || !startNtoa || !resolverDestroy) {
+		static int told;
+		if (!told) {
+			told = 1;
+			printf("PS5: no resolver to look up %s (pool %p create %p ntoa %p)\n", name, (void *)poolCreate,
+				(void *)resolverCreate, (void *)startNtoa);
+		}
 		return -1;
 	}
 	pthread_mutex_lock(&lock);
 	if (pool < 0) {
-		pool = sceNetPoolCreate("pd_resolver", 64 * 1024, 0);
+		pool = poolCreate("pd_resolver", 64 * 1024, 0);
 	}
 	const int memid = pool;
 	pthread_mutex_unlock(&lock);
-	const int rid = sceNetResolverCreate("pd_resolver", memid, 0);
+	const int rid = resolverCreate("pd_resolver", memid, 0);
 	if (rid < 0) {
 		printf("PS5: resolver for %s: 0x%08x (pool 0x%08x)\n", name, (unsigned)rid, (unsigned)memid);
 		return -1;
 	}
 	uint32_t addr = 0;
-	const int r = sceNetResolverStartNtoa(rid, name, &addr, 0, 0, 0);
-	sceNetResolverDestroy(rid);
+	const int r = startNtoa(rid, name, &addr, 0, 0, 0);
+	resolverDestroy(rid);
 	if (r < 0 || addr == 0) {
 		printf("PS5: %s did not resolve: 0x%08x\n", name, (unsigned)r);
 		return -1;
