@@ -5,7 +5,7 @@
 # The PS5's address (ip:port, as the FTP payload shows it) is asked once and kept in .ps5-host
 # beside this file; PS5_HOST overrides it. The game's own files (eboot.bin, sce_sys, sce_module,
 # cacert.pem, the shader cache) go every time; everything else (ROMs, texture packs) only when the
-# PS5 does not have it yet, so the first push installs and every push after it is an update.
+# PS5 does not have it at that size, so the first push installs and every push after it is an update.
 # The console's saves, pd.ini and pd.log are never touched.
 set -eu
 here=$(cd -- "$(dirname -- "$0")" && pwd)
@@ -20,7 +20,10 @@ if [ -z "$host" ]; then
     echo "$host" > "$hostfile"
 fi
 cd "$src"
-ls -d PPSA6400[78] >/dev/null 2>&1 || { echo "no PPSA64007 or PPSA64008 folder in $src"; exit 1; }
+# PS5_TITLES: which title folders (both by default, those that are here)
+titles=""
+for t in ${PS5_TITLES:-PPSA64007 PPSA64008}; do [ -d "$t" ] && titles="$titles $t"; done
+[ -n "$titles" ] || { echo "no PPSA64007 or PPSA64008 folder in $src"; exit 1; }
 
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 url() { local p=${1// /%20}; p=${p//#/%23}; echo "ftp://$host$dir/${p//\?/%3F}"; }
@@ -34,17 +37,19 @@ put() {
     curl -sS "ftp://$host/" -Q "*DELE $dir/$1" -Q "RNFR $dir/$1.new" -Q "RNTO $dir/$1" -o /dev/null
 }
 
-curl -sS --connect-timeout 5 -l "ftp://$host/" -o /dev/null ||
+curl -sS --connect-timeout 5 "ftp://$host/" -o /dev/null ||
     { echo "cannot reach the PS5's FTP server at $host (wrong address in $hostfile?)"; exit 1; }
 
 sent=0 kept=0
-find PPSA6400[78] -type d | sort > "$tmp/dirs"
+find $titles -type d | sort > "$tmp/dirs"
 while IFS= read -r d; do
-    curl -s -l "$(url "$d")/" 2>/dev/null | tr -d '\r' > "$tmp/remote" || true
+    # the console's server lists with LIST only (no NLST): "size<TAB>name" for each file
+    curl -s "$(url "$d")/" 2>/dev/null | tr -d '\r' |
+        awk '$1 ~ /^-/ { s = $5; for (i = 1; i <= 8; i++) $i = ""; sub(/^ +/, ""); print s "\t" $0 }' > "$tmp/remote" || true
     find "$d" -maxdepth 1 -type f | sort > "$tmp/files"
     while IFS= read -r f; do
         if echo "$f" | grep -Eq "$never"; then continue; fi
-        if echo "$f" | grep -Eq "$always" || ! grep -qxF "$(basename "$f")" "$tmp/remote"; then
+        if echo "$f" | grep -Eq "$always" || ! grep -qxF "$(wc -c < "$f" | tr -d ' ')	$(basename "$f")" "$tmp/remote"; then
             echo "  $f"
             put "$f" || { echo "failed: $f"; exit 1; }
             sent=$((sent + 1))

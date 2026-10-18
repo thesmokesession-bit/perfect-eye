@@ -43,7 +43,9 @@ put() {
 
 live=""
 for t in $titles; do
-    if curl -s --connect-timeout 5 -l "$ftp/$t/" 2>/dev/null | tr -d '\r' > "$tmp/$t.ls"; then
+    # LIST, not NLST, which the console's server does not have: the files' names
+    if curl -sf --connect-timeout 5 "$ftp/$t/" -o "$tmp/$t.raw" 2>/dev/null; then
+        tr -d '\r' < "$tmp/$t.raw" | awk '$1 ~ /^-/ { for (i = 1; i <= 8; i++) $i = ""; sub(/^ +/, ""); print }' > "$tmp/$t.ls"
         live="$live $t"
         mkdir -p "$tmp/$t"
     fi
