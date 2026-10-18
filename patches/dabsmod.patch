@@ -150,7 +150,7 @@ index 3d9344d6e..13e3f5ada 100644
  // What ended a batch and forced a draw call. See g_GfxFlushReasons.
  enum GfxFlushReason {
 diff --git a/port/fast3d/gfx_pc.cpp b/port/fast3d/gfx_pc.cpp
-index 0631a10b3..6a820cb41 100644
+index 0631a10b3..d45a765d2 100644
 --- a/port/fast3d/gfx_pc.cpp
 +++ b/port/fast3d/gfx_pc.cpp
 @@ -26,6 +26,14 @@
@@ -236,6 +236,24 @@ index 0631a10b3..6a820cb41 100644
                             gfx_current_dimensions.height != gfx_current_window_dimensions.height);
      if (gfx_framebuffers_enabled && (game_post_processes || gfx_msaa_level > 1)) {
          game_renders_to_framebuffer = true;
+@@ -8799,7 +8850,17 @@ extern "C" void gfx_run(Gfx* commands) {
+     gfx_mark_state_dirty();
+     gfx_readable_reset();
+     gfx_mesh_start_frame();
++#ifdef PLATFORM_PS5
++    if (ps5_trace_frames > 0) {
++        ps5Trace(0, "gfx: the frame's lists drawn");
++    }
++#endif
+     gfx_run_dl(commands);
++#ifdef PLATFORM_PS5
++    if (ps5_trace_frames > 0) {
++        ps5Trace(0, "gfx: the frame's lists done");
++    }
++#endif
+     gfx_mesh_flush();
+     mesh_cur = NULL;
+     gfx_flush_for(GFX_FLUSH_OTHER);
 diff --git a/port/fast3d/gfx_post.cpp b/port/fast3d/gfx_post.cpp
 index a4604c97d..8ca829554 100644
 --- a/port/fast3d/gfx_post.cpp
@@ -1072,6 +1090,27 @@ index 0f995ee50..b90c5abaf 100644
  // Mod.KillFeed as it stands here (offline/online resolved)
  s32 killfeedIsOn(void);
  
+diff --git a/port/include/system.h b/port/include/system.h
+index 981fef3c0..8626e07d8 100644
+--- a/port/include/system.h
++++ b/port/include/system.h
+@@ -60,6 +60,16 @@ void sysCpuRelax(void);
+ void crashInit(void);
+ void crashShutdown(void);
+ 
++// PS5: a line in the watch file for each step of the frames after a traced
++// event (ps5Trace() in ps5_platform.c), where a death no signal reports happened
++#ifdef PLATFORM_PS5
++extern volatile int ps5_trace_frames;
++void ps5Trace(int frames, const char *fmt, ...);
++#define PS5_TRACE(...) do { if (ps5_trace_frames > 0) ps5Trace(0, __VA_ARGS__); } while (0)
++#else
++#define PS5_TRACE(...) do { } while (0)
++#endif
++
+ #ifdef __cplusplus
+ }
+ #endif
 diff --git a/port/include/video.h b/port/include/video.h
 index 4fad217b1..052e9ba9d 100644
 --- a/port/include/video.h
@@ -4346,10 +4385,18 @@ index aef9f054e..b6b6f2881 100644
  	}
  
 diff --git a/src/game/lv.c b/src/game/lv.c
-index 029ce2a16..133315233 100644
+index 029ce2a16..13aa3d766 100644
 --- a/src/game/lv.c
 +++ b/src/game/lv.c
-@@ -2191,6 +2191,20 @@ Gfx *lvRender(Gfx *gdl)
+@@ -1262,6 +1262,7 @@ bool lvHoldsLevelStart(void)
+ 
+ Gfx *lvRender(Gfx *gdl)
+ {
++	PS5_TRACE("lv: the frame drawn");
+ 	gSPSegment(gdl++, SPSEGMENT_PHYSICAL, 0x00000000);
+ 
+ #if VERSION >= VERSION_NTSC_1_0
+@@ -2191,6 +2192,20 @@ Gfx *lvRender(Gfx *gdl)
  	}
  #endif
  
@@ -4369,6 +4416,15 @@ index 029ce2a16..133315233 100644
 +
  	return gdl;
  }
+ 
+@@ -2494,6 +2509,8 @@ s32 lvGetSlowMotionType(void)
+ 
+ void lvTick(void)
+ {
++
++	PS5_TRACE("lv: tick");
+ #ifndef PLATFORM_N64
+ 	hdPreloadTick();
  
 diff --git a/src/game/mainmenu.c b/src/game/mainmenu.c
 index ea7811d68..a83d0fde0 100644
@@ -4473,7 +4529,7 @@ index ea7811d68..a83d0fde0 100644
  			updatenoticeMainMenuTick(dialogdef, data->dialog2.inputs, false);
  #endif
 diff --git a/src/game/menu.c b/src/game/menu.c
-index 1279d1766..72fc638c1 100644
+index 1279d1766..b24fd58a0 100644
 --- a/src/game/menu.c
 +++ b/src/game/menu.c
 @@ -1683,8 +1683,18 @@ void menuOpenDialog(struct menudialogdef *dialogdef, struct menudialog *dialog,
@@ -4495,7 +4551,16 @@ index 1279d1766..72fc638c1 100644
  #ifndef PLATFORM_N64
  	// Prevent the mouse from immediately changing a slider's value, as was
  	// happening while entering the Audio menu.
-@@ -4599,6 +4609,36 @@ Gfx *menuRenderDialogs(Gfx *gdl)
+@@ -4421,6 +4431,8 @@ u32 g_MenuCThresh = 120;
+ 
+ Gfx *menuRenderDialog(Gfx *gdl, struct menudialog *dialog, struct menu *menu, bool lightweight)
+ {
++	PS5_TRACE("menu: page %p drawn", dialog->definition);
++
+ #ifndef PLATFORM_N64
+ 	const s32 side = netLobbyMenuDialogAlign(dialog->definition);
+ #endif
+@@ -4599,6 +4611,36 @@ Gfx *menuRenderDialogs(Gfx *gdl)
  	}
  #endif
  
@@ -4532,7 +4597,7 @@ index 1279d1766..72fc638c1 100644
  	return menuRenderDialogsInner(gdl);
  }
  
-@@ -6331,6 +6371,10 @@ Gfx *menuRender(Gfx *gdl)
+@@ -6331,6 +6373,10 @@ Gfx *menuRender(Gfx *gdl)
  	// and health bar would be drawn over the folder and are left out.
  	bool overfront = false;
  
@@ -4543,7 +4608,7 @@ index 1279d1766..72fc638c1 100644
  	if (geIntroIsActive()) {
  		gdl = geIntroRender(gdl);
  
-@@ -6382,6 +6426,9 @@ Gfx *menuRender(Gfx *gdl)
+@@ -6382,6 +6428,9 @@ Gfx *menuRender(Gfx *gdl)
  		gDPFillRectangle(gdl++, viGetViewLeft(), viGetViewTop(),
  				viGetViewLeft() + viGetViewWidth() + 1, viGetViewTop() + viGetViewHeight() + 2);
  		gDPPipeSync(gdl++);
@@ -4553,7 +4618,7 @@ index 1279d1766..72fc638c1 100644
  	} else
  #endif
  	if (g_MenuData.nextbg != 255) {
-@@ -6410,7 +6457,7 @@ Gfx *menuRender(Gfx *gdl)
+@@ -6410,7 +6459,7 @@ Gfx *menuRender(Gfx *gdl)
  	}
  
  #ifndef PLATFORM_N64
@@ -4562,7 +4627,7 @@ index 1279d1766..72fc638c1 100644
  #else
  	if (IS8MB() && g_MenuData.unk5d4) {
  #endif
-@@ -6498,8 +6545,8 @@ Gfx *menuRender(Gfx *gdl)
+@@ -6498,8 +6547,8 @@ Gfx *menuRender(Gfx *gdl)
  	// Render the second layer of the background (for the combat simulator cone,
  	// which draws over the top of the hud piece)
  #ifndef PLATFORM_N64
@@ -4574,10 +4639,18 @@ index 1279d1766..72fc638c1 100644
  #endif
  	if (g_MenuData.nextbg != 255) {
 diff --git a/src/game/menuitem.c b/src/game/menuitem.c
-index 07a0ae11d..6a2eb9304 100644
+index 07a0ae11d..f319e3b63 100644
 --- a/src/game/menuitem.c
 +++ b/src/game/menuitem.c
-@@ -1874,7 +1874,12 @@ void menuitemKeyboardInit(struct menuitem *item, union menuitemdata *data)
+@@ -25,6 +25,7 @@
+ #include "lib/str.h"
+ #include "data.h"
+ #include "types.h"
++#include "system.h"
+ #ifndef PLATFORM_N64
+ #include "input.h"
+ #include "net/net.h"
+@@ -1874,7 +1875,12 @@ void menuitemKeyboardInit(struct menuitem *item, union menuitemdata *data)
  	// (or I) first, and the letters pressed before it were menu buttons: E is
  	// a second Accept, so "Eddie" typed into the name page came out as "e"
  	// (2026-10-08). A controller's player gets the grid as before.
@@ -4590,11 +4663,46 @@ index 07a0ae11d..6a2eb9304 100644
  		g_MenuKeyboardPlayer = g_MpPlayerNum;
  		inputClearLastKey();
  		inputClearLastTextChar();
+@@ -5213,6 +5219,8 @@ void menuitemControllerInit(union menuitemdata *data)
+ 
+ Gfx *menuitemRender(Gfx *gdl, struct menurendercontext *context)
+ {
++	PS5_TRACE("menu: item %p (type %d) drawn", context->item, context->item->type);
++
+ 	switch (context->item->type) {
+ 	case MENUITEMTYPE_LIST:        return menuitemListRender(gdl, context);
+ 	case MENUITEMTYPE_SELECTABLE:  return menuitemSelectableRender(gdl, context);
+@@ -5248,6 +5256,8 @@ Gfx *menuitemRender(Gfx *gdl, struct menurendercontext *context)
+  */
+ bool menuitemTick(struct menuitem *item, struct menudialog *dialog, struct menuinputs *inputs, u32 tickflags, union menuitemdata *data)
+ {
++	PS5_TRACE("menu: item %p (type %d) ticks", item, item->type);
++
+ 	switch (item->type) {
+ 	case MENUITEMTYPE_LIST:        return menuitemListTick(item, inputs, tickflags, data);
+ 	case MENUITEMTYPE_SELECTABLE:  return menuitemSelectableTick(item, inputs, tickflags);
 diff --git a/src/game/menutick.c b/src/game/menutick.c
-index 3657861d0..7b1c30825 100644
+index 3657861d0..92702f18b 100644
 --- a/src/game/menutick.c
 +++ b/src/game/menutick.c
-@@ -465,7 +465,12 @@ void menuTick(void)
+@@ -28,6 +28,7 @@
+ #include "lib/snd.h"
+ #include "data.h"
+ #include "types.h"
++#include "system.h"
+ #ifndef PLATFORM_N64
+ #include "gexfront.h"
+ #include "gecinema.h"
+@@ -78,6 +79,8 @@ void menuTick(void)
+ 	s32 j;
+ 	s32 k;
+ 	s32 isdialogopen;
++
++	PS5_TRACE("menu: tick");
+ 	s32 sp340 = true;
+ 	s32 anyopen = false;
+ 
+@@ -465,7 +468,12 @@ void menuTick(void)
  	if (g_FileState == FILESTATE_UNSELECTED && g_Vars.stagenum == STAGE_CITRAINING) {
  		g_PlayersWithControl[0] = false;
  
