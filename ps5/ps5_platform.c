@@ -122,6 +122,7 @@ static void open_log(void)
 	if (freopen(LOG_PATH, "a", stderr)) {
 		setvbuf(stderr, stderr_buffer, _IOFBF, sizeof(stderr_buffer));
 	}
+	int piped = 0;
 	/* stdout and stderr then go into a pipe and a thread of their own writes the pipe to the
 	 * file: a flush held stdio's lock through the slow write, and the game's thread logging a
 	 * line meanwhile waited for it (stutters, 2026-10-18). Without a pipe, as it was. */
@@ -140,8 +141,15 @@ static void open_log(void)
 				dup2(fds[1], fileno(stderr));
 				close(fds[1]);
 				log_fd = file;
+				piped = 1;
 			}
 		}
+	}
+	/* With the pipe, a line is cheap to write (the writer thread takes the slow part), so each
+	 * line goes as it is printed and a sudden end loses none; the flusher stays for the rest */
+	if (piped) {
+		setvbuf(stdout, stdout_buffer, _IOLBF, sizeof(stdout_buffer));
+		setvbuf(stderr, stderr_buffer, _IOLBF, sizeof(stderr_buffer));
 	}
 	pthread_t thread;
 	if (pthread_create(&thread, NULL, log_flusher, NULL) == 0) {
@@ -301,7 +309,7 @@ static void *watchdog(void *arg)
 		}
 		still = (frames == last) ? still + 1 : 0;
 		last = frames;
-		if (frames > 0 && still >= 2 && samples < 3) {
+		if (frames > 0 && still >= 10 && samples < 3) {
 			samples++;
 			pthread_kill(main_thread, SIGUSR1);
 			if (ps5_worker_known) {
@@ -725,7 +733,27 @@ void ps5LastWords(const char *fmt, ...)
 
 static void on_exit_report(void)
 {
-	stack_scan("exit() called");
+	stack_scan("exit() handlers done");
+}
+
+/* exit() and _exit() as everything in the title calls them (link-title.sh wraps both): said
+ * first, before any atexit handler that might hang */
+void __real_exit(int status) __attribute__((noreturn));
+void __real__exit(int status) __attribute__((noreturn));
+void __wrap_exit(int status)
+{
+	char who[48];
+	snprintf(who, sizeof(who), "exit(%d) called", status);
+	stack_scan(who);
+	__real_exit(status);
+}
+
+void __wrap__exit(int status)
+{
+	char who[48];
+	snprintf(who, sizeof(who), "_exit(%d) called", status);
+	stack_scan(who);
+	__real__exit(status);
 }
 
 /* ps5_rom.c: the player's ROMs put where the game looks for them */
@@ -755,7 +783,7 @@ void ps5PlatformInit(int *argc, const char ***argv)
 	/* Every signal whose default ends the process: online play ended it with none of the
 	 * first six (2026-10-18), and an unhandled one leaves no report */
 	const int sigs[] = { SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGSYS, SIGTRAP, SIGTERM, SIGHUP, SIGINT,
-		SIGQUIT, SIGALRM, SIGVTALRM, SIGPROF, SIGXCPU, SIGXFSZ, SIGUSR2 };
+		SIGQUIT, SIGALRM, SIGVTALRM, SIGPROF, SIGXCPU, SIGXFSZ, SIGUSR2, SIGEMT };
 	for (size_t i = 0; i < sizeof(sigs) / sizeof(sigs[0]); i++) {
 		sigaction(sigs[i], &action, NULL);
 	}

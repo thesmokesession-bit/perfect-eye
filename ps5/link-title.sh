@@ -61,6 +61,8 @@ done
 # fcntl answers EINVAL to a socket's close-on-exec, which curl took as a failed socket and so
 # never connected anywhere (ps5_platform.c's __wrap_fcntl)
 path_wraps+=("--wrap=fcntl")
+# exit and _exit say where they were called from first (ps5_platform.c)
+path_wraps+=("--wrap=exit" "--wrap=_exit")
 
 # AGC comes from system modules; these host-link stubs only name the imports.
 stub() {

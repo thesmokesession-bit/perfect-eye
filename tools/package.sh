@@ -19,12 +19,6 @@ title() {
     mkdir -p "$app/sce_sys" "$app/sce_module" "$app/data" "$app/texture-packs" "$app/added-content"
     cp "$build/pd.x86_64" "$app/eboot.bin"
     cp "$sys"/{param.json,icon0.png,pic0.dds,pic1.dds} "$app/sce_sys/"
-    # This machine's own tile art, when there is some (local-tiles/<id>, kept out of git: the
-    # player's own box art stays on their console and out of the public repo)
-    local own="$root/local-tiles/$id"
-    for f in icon0.png pic0.dds pic1.dds; do
-        [[ -f $own/$f ]] && cp "$own/$f" "$app/sce_sys/$f"
-    done
     cp "$radv/runtime/libc.prx" "$app/sce_module/libc.prx"
     cp "$root/assets/cacert.pem" "$app/cacert.pem"
     # Get Mods and Maps' list until the release's newer one answers (port/src/modmode.c)

@@ -1408,10 +1408,10 @@ index 1907f81fe..ebb17da0d 100644
  	snprintf(g_NoticeTitle, sizeof(g_NoticeTitle), "CONVERTING %s", name);
  	for (char *c = g_NoticeTitle; *c; ++c) {
 diff --git a/port/src/ghostnet.c b/port/src/ghostnet.c
-index ecfb59a65..a003ae36a 100644
+index ecfb59a65..674042c82 100644
 --- a/port/src/ghostnet.c
 +++ b/port/src/ghostnet.c
-@@ -769,6 +769,72 @@ static size_t ghostnetCurlWrite(void *ptr, size_t size, size_t nmemb, void *arg)
+@@ -769,6 +769,73 @@ static size_t ghostnetCurlWrite(void *ptr, size_t size, size_t nmemb, void *arg)
  	return ghostnetBufAppend(arg, ptr, add) ? add : 0;
  }
  
@@ -1436,10 +1436,12 @@ index ecfb59a65..a003ae36a 100644
 +}
 +#endif
 +
-+// One connection cache, DNS cache and TLS session cache for every request on every thread:
-+// each request made its own handle and so its own lookup, TCP connection and TLS handshake,
-+// and the lobby's pages took seconds a step on the console (2026-10-18). With the share a
-+// request to the same server goes out on the connection the last one left open.
++// Each request made its own handle and so its own lookup, TCP connection and TLS handshake,
++// and the lobby's pages took seconds a step on the console (2026-10-18). Now each thread keeps
++// one handle (and with it its open connection to the server) for every request it makes, and
++// all of them share the DNS answers and TLS sessions, so even a thread's first request resumes
++// a session rather than starting one. Connections are not shared: curl does not support one
++// connection cache used by several threads at once.
 +static SDL_mutex *g_CurlShareLocks[CURL_LOCK_DATA_LAST];
 +static CURLSH *g_CurlShare;
 +
@@ -1471,7 +1473,6 @@ index ecfb59a65..a003ae36a 100644
 +			curl_share_setopt(share, CURLSHOPT_UNLOCKFUNC, ghostnetShareUnlock);
 +			curl_share_setopt(share, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS);
 +			curl_share_setopt(share, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION);
-+			curl_share_setopt(share, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
 +		}
 +
 +		g_CurlShare = share;
@@ -1484,7 +1485,55 @@ index ecfb59a65..a003ae36a 100644
  static int ghostnetCurlProgress(void *arg, curl_off_t dltotal, curl_off_t dlnow, curl_off_t ultotal, curl_off_t ulnow)
  {
  	const struct ghostnetreq *req = arg;
-@@ -794,6 +860,19 @@ bool ghostnetSend(const struct ghostnetreq *req, struct ghostnetbuf *buf,
+@@ -777,10 +844,46 @@ static int ghostnetCurlProgress(void *arg, curl_off_t dltotal, curl_off_t dlnow,
+ 	return req->cancel && *req->cancel ? 1 : 0;
+ }
+ 
++// this thread's handle, cleaned up with the thread
++static SDL_TLSID g_CurlTls;
++
++static void ghostnetCurlFree(void *curl)
++{
++	curl_easy_cleanup(curl);
++}
++
++static CURL *ghostnetCurl(void)
++{
++	static SDL_SpinLock once;
++	CURL *curl;
++
++	SDL_AtomicLock(&once);
++	if (!g_CurlTls) {
++		g_CurlTls = SDL_TLSCreate();
++	}
++	SDL_AtomicUnlock(&once);
++
++	curl = g_CurlTls ? SDL_TLSGet(g_CurlTls) : NULL;
++
++	if (curl) {
++		// the options go, the open connection and its caches stay
++		curl_easy_reset(curl);
++		return curl;
++	}
++
++	curl = curl_easy_init();
++
++	if (curl && g_CurlTls) {
++		SDL_TLSSet(g_CurlTls, curl, ghostnetCurlFree);
++	}
++
++	return curl;
++}
++
+ bool ghostnetSend(const struct ghostnetreq *req, struct ghostnetbuf *buf,
+ 		s32 *status, char *err, u32 errsize)
+ {
+-	CURL *curl = curl_easy_init();
++	CURL *curl = ghostnetCurl();
+ 	struct curl_slist *headers = NULL;
+ 	char header[128];
+ 	CURLcode res;
+@@ -794,6 +897,19 @@ bool ghostnetSend(const struct ghostnetreq *req, struct ghostnetbuf *buf,
  	}
  
  	curl_easy_setopt(curl, CURLOPT_URL, req->url);
@@ -1504,10 +1553,11 @@ index ecfb59a65..a003ae36a 100644
  	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, ghostnetCurlWrite);
  	curl_easy_setopt(curl, CURLOPT_WRITEDATA, buf);
  	curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)(req->timeout > 0 ? req->timeout : GHOSTNET_TIMEOUT));
-@@ -878,7 +957,23 @@ bool ghostnetSend(const struct ghostnetreq *req, struct ghostnetbuf *buf,
+@@ -878,7 +994,22 @@ bool ghostnetSend(const struct ghostnetreq *req, struct ghostnetbuf *buf,
  		curl_slist_free_all(headers);
  	}
  
+-	curl_easy_cleanup(curl);
 +#ifdef PLATFORM_PS5
 +	{
 +		// where a slow request's time went
@@ -1521,14 +1571,13 @@ index ecfb59a65..a003ae36a 100644
 +				(int)(total * 1000));
 +	}
 +#endif
- 	curl_easy_cleanup(curl);
-+#ifdef PLATFORM_PS5
-+	sysLogPrintf(LOG_NOTE, "ghostnet: request closed");
-+#endif
++	if (!g_CurlTls) {
++		curl_easy_cleanup(curl);
++	}
  
  	return res == CURLE_OK;
  }
-@@ -1524,6 +1619,9 @@ static int ghostnetWorker(void *arg)
+@@ -1524,6 +1655,9 @@ static int ghostnetWorker(void *arg)
  		snprintf(msg, sizeof(msg), "%s", LANG_N("wrong name or PIN"));
  	}
  
