@@ -135,8 +135,119 @@ index 69b2d8252..0dd5bad4d 100644
  
  #define ENET_IMPLEMENTATION 1
  #define ENET_NO_PRAGMA_LINK 1
+diff --git a/port/fast3d/gfx_api.h b/port/fast3d/gfx_api.h
+index 3d9344d6e..13e3f5ada 100644
+--- a/port/fast3d/gfx_api.h
++++ b/port/fast3d/gfx_api.h
+@@ -84,6 +84,9 @@ extern float gfx_render_scale;
+ extern float gfx_fsr_sharpness;
+ // TAA (Video.TAA): see gfx_pc.cpp, gSPTaaEXT. Single-sampled only.
+ extern bool gfx_taa;
++// Retro mode (Video.RetroMode): the game laid out at 4:3, and the backend's
++// post_process() ends with GFX_POST_CRT. Vulkan only.
++extern bool gfx_retro;
+ 
+ // What ended a batch and forced a draw call. See g_GfxFlushReasons.
+ enum GfxFlushReason {
+diff --git a/port/fast3d/gfx_pc.cpp b/port/fast3d/gfx_pc.cpp
+index 0631a10b3..28825a698 100644
+--- a/port/fast3d/gfx_pc.cpp
++++ b/port/fast3d/gfx_pc.cpp
+@@ -406,6 +406,7 @@ float gfx_color_saturation = 1.0f;
+ float gfx_color_contrast = 1.0f;
+ float gfx_color_black_level = 0.0f;
+ bool gfx_post_smaa = false;
++bool gfx_retro = false;
+ float gfx_render_scale = 1.0f;
+ #define GFX_MAX_RENDER_SIDE 8192u
+ float gfx_fsr_sharpness = 0.2f;
+@@ -8694,6 +8695,12 @@ extern "C" void gfx_start_frame(void) {
+ 
+     gfx_current_window_dimensions.aspect_ratio = (float)gfx_current_window_dimensions.width / gfx_current_window_dimensions.height;
+ 
++    // Retro mode: everything lays itself out for 4:3 and is drawn stretched
++    // across the window; the CRT pass squeezes it back between bars
++    if (gfx_retro && gfx_framebuffers_enabled && gfx_rapi->post_process) {
++        gfx_current_window_dimensions.aspect_ratio = 4.0f / 3.0f;
++    }
++
+     gfx_current_dimensions = gfx_current_window_dimensions;
+ 
+     // The render scale: FSR draws the game at a fraction of the window,
+@@ -8748,7 +8755,7 @@ extern "C" void gfx_start_frame(void) {
+     // SMAA or a render scale: the frame goes through the backend's post
+     // chain on its way to the window, from a single-sampled framebuffer
+     game_post_processes = gfx_framebuffers_enabled && gfx_rapi->post_process &&
+-                          (gfx_post_smaa || gfx_taa || gfx_current_dimensions.width != gfx_current_window_dimensions.width ||
++                          (gfx_post_smaa || gfx_taa || gfx_retro || gfx_current_dimensions.width != gfx_current_window_dimensions.width ||
+                            gfx_current_dimensions.height != gfx_current_window_dimensions.height);
+     if (gfx_framebuffers_enabled && (game_post_processes || gfx_msaa_level > 1)) {
+         game_renders_to_framebuffer = true;
+diff --git a/port/fast3d/gfx_post.cpp b/port/fast3d/gfx_post.cpp
+index a4604c97d..8ca829554 100644
+--- a/port/fast3d/gfx_post.cpp
++++ b/port/fast3d/gfx_post.cpp
+@@ -12,7 +12,7 @@
+ #include "post/SearchTex.h"
+ 
+ static const char *gfx_post_names[GFX_POST_NUM_PASSES] = {
+-    "SMAA edges", "SMAA weights", "SMAA blend", "FSR EASU", "FSR RCAS", "copy", "TAA",
++    "SMAA edges", "SMAA weights", "SMAA blend", "FSR EASU", "FSR RCAS", "copy", "TAA", "CRT",
+ };
+ 
+ const char *gfx_post_pass_name(GfxPostPass pass) {
+@@ -270,6 +270,25 @@ std::string gfx_post_fragment_shader(const GfxPostLang &lang, GfxPostPass pass)
+                  "    oCol = vec4(mix(hist, cur, uTaa[4].z), 1.0);\n"
+                  "}\n";
+             break;
++        case GFX_POST_CRT:
++            s += "void main() {\n"
++                 "    float w = uParams.x;\n"
++                 "    vec2 c = vec2((vUV.x - 0.5 * (1.0 - w)) / w, vUV.y) * 2.0 - 1.0;\n"
++                 "    c *= 1.0 + 0.035 * dot(c, c);\n"
++                 "    vec2 uv = c * 0.5 + 0.5;\n"
++                 "    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {\n"
++                 "        oCol = vec4(0.0, 0.0, 0.0, 1.0);\n"
++                 "        return;\n"
++                 "    }\n"
++                 "    vec3 col = texture(TEX0, uv).rgb;\n"
++                 "    float s = sin(uv.y * 240.0 * 3.14159265);\n"
++                 "    col *= mix(0.62, 1.0, s * s);\n"
++                 "    float m = mod(floor(gl_FragCoord.x), 3.0);\n"
++                 "    col *= vec3(m == 0.0 ? 1.0 : 0.82, m == 1.0 ? 1.0 : 0.82, m == 2.0 ? 1.0 : 0.82);\n"
++                 "    col *= 1.3 * (1.0 - 0.18 * dot(c * c, c * c));\n"
++                 "    oCol = vec4(col, 1.0);\n"
++                 "}\n";
++            break;
+         default:
+             // Bilinear when the frame goes up or across; going down
+             // (supersampling) an average of a grid of bilinear taps spread
+diff --git a/port/fast3d/gfx_post.h b/port/fast3d/gfx_post.h
+index 4c149b586..55c9dfb4b 100644
+--- a/port/fast3d/gfx_post.h
++++ b/port/fast3d/gfx_post.h
+@@ -30,6 +30,11 @@
+  *                 uParams the lines h = a * depth + b of this frame (.xy)
+  *                 and last frame (.zw) whose 1 / h is a point's distance:
+  *                 a history of another surface is not taken
++ *   CRT           TEX0 the frame, drawn at 4:3's aspect across the whole
++ *                 window; uParams.x the share of the window's width a 4:3
++ *                 picture takes. Retro mode's tube: the picture squeezed back
++ *                 to 4:3 between black bars, curved a little, with scanlines,
++ *                 an aperture grille and darker corners
+  *
+  * OpenGL binds TEX0-2 to units 0-2 as uTex0-2 and uParams and uTaa[5] as
+  * uniforms; Vulkan's push constants are four ints (the three texture slots
+@@ -48,6 +53,7 @@ enum GfxPostPass {
+     GFX_POST_RCAS,
+     GFX_POST_COPY,
+     GFX_POST_TAA,
++    GFX_POST_CRT,
+     GFX_POST_NUM_PASSES
+ };
+ 
 diff --git a/port/fast3d/gfx_vulkan.cpp b/port/fast3d/gfx_vulkan.cpp
-index 687f3fa7b..d277bc9c4 100644
+index 687f3fa7b..338590d07 100644
 --- a/port/fast3d/gfx_vulkan.cpp
 +++ b/port/fast3d/gfx_vulkan.cpp
 @@ -60,6 +60,17 @@
@@ -157,7 +268,61 @@ index 687f3fa7b..d277bc9c4 100644
  #ifndef _LANGUAGE_C
  #define _LANGUAGE_C
  #endif
-@@ -4578,8 +4589,12 @@ static PFN_vkGetInstanceProcAddr vk_load_loader_headless(void) {
+@@ -4054,7 +4065,7 @@ static void vk_grade_frame(void) {
+  */
+ static VkPipeline vk_post_pipelines[GFX_POST_NUM_PASSES];
+ static bool vk_post_pipeline_failed[GFX_POST_NUM_PASSES];
+-static VkImg vk_post_edges, vk_post_weights, vk_post_smaa_out, vk_post_easu;
++static VkImg vk_post_edges, vk_post_weights, vk_post_smaa_out, vk_post_easu, vk_post_retro;
+ static uint32_t vk_post_area_tex, vk_post_search_tex;
+ static bool vk_post_failed;
+ 
+@@ -4180,6 +4191,10 @@ static bool gfx_vk_post_process(int fb_src, bool smaa, bool fsr, float sharpness
+     const uint32_t sw = in->width, sh = in->height;
+     const bool scaled = sw != win.width || sh != win.height;
+     bool ok = true;
++    // retro mode: what would have gone to the window goes through the CRT pass
++    const bool retro = gfx_retro && vk_post_target(vk_post_retro, win.width, win.height);
++    VkImg &out = retro ? vk_post_retro : win;
++    VkImg *last = &out;
+ 
+     if (smaa) {
+         if (!vk_post_area_tex) {
+@@ -4191,7 +4206,7 @@ static bool gfx_vk_post_process(int fb_src, bool smaa, bool fsr, float sharpness
+         ok = ok && vk_post_draw(GFX_POST_SMAA_EDGES, vk_post_edges, in, NULL, NULL, 0, 0, 0.f, 0.f, true);
+         ok = ok && vk_post_draw(GFX_POST_SMAA_WEIGHTS, vk_post_weights, &vk_post_edges, NULL, NULL,
+                                 vk_post_slot(vk_post_area_tex), vk_post_slot(vk_post_search_tex), 0.f, 0.f, false);
+-        ok = ok && vk_post_draw(GFX_POST_SMAA_BLEND, scaled ? vk_post_smaa_out : win, in, &vk_post_weights, NULL, 0, 0,
++        ok = ok && vk_post_draw(GFX_POST_SMAA_BLEND, scaled ? vk_post_smaa_out : out, in, &vk_post_weights, NULL, 0, 0,
+                                 0.f, 0.f, false);
+         in = &vk_post_smaa_out;
+     }
+@@ -4200,12 +4215,21 @@ static bool gfx_vk_post_process(int fb_src, bool smaa, bool fsr, float sharpness
+         if (fsr && vk_post_target(vk_post_easu, win.width, win.height) &&
+             vk_post_draw(GFX_POST_EASU, vk_post_easu, in, NULL, NULL, 0, 0, (float)win.width, (float)win.height,
+                          false)) {
+-            ok = vk_post_draw(GFX_POST_RCAS, win, &vk_post_easu, NULL, NULL, 0, 0, sharpness, 0.f, false);
++            ok = vk_post_draw(GFX_POST_RCAS, out, &vk_post_easu, NULL, NULL, 0, 0, sharpness, 0.f, false);
+         } else {
+-            ok = vk_post_draw(GFX_POST_COPY, win, in, NULL, NULL, 0, 0, 0.f, 0.f, false);
++            ok = vk_post_draw(GFX_POST_COPY, out, in, NULL, NULL, 0, 0, 0.f, 0.f, false);
+         }
+     } else if (ok && !smaa) {
+-        ok = vk_post_draw(GFX_POST_COPY, win, in, NULL, NULL, 0, 0, 0.f, 0.f, false);
++        if (retro) {
++            last = in; // the CRT pass reads the frame itself
++        } else {
++            ok = vk_post_draw(GFX_POST_COPY, win, in, NULL, NULL, 0, 0, 0.f, 0.f, false);
++        }
++    }
++
++    if (ok && retro) {
++        ok = vk_post_draw(GFX_POST_CRT, win, last, NULL, NULL, 0, 0,
++                          (4.f / 3.f) / ((float)win.width / (float)win.height), 0.f, false);
+     }
+ 
+     vk_bound_pipeline = VK_NULL_HANDLE;
+@@ -4578,8 +4602,12 @@ static PFN_vkGetInstanceProcAddr vk_load_loader_headless(void) {
  static bool vk_init_instance(SDL_Window *wnd, bool debug) {
      const bool headless = gfx_sdl_vulkan_headless() != 0;
  
@@ -170,7 +335,7 @@ index 687f3fa7b..d277bc9c4 100644
      if (!vk_get_instance_proc) {
          vk_fail("no Vulkan loader: %s", SDL_GetError());
          return false;
-@@ -4595,13 +4610,24 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
+@@ -4595,13 +4623,24 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
      if (vk_enumerate_instance_version) {
          vk_enumerate_instance_version(&loader_version);
      }
@@ -195,7 +360,7 @@ index 687f3fa7b..d277bc9c4 100644
          uint32_t count = 0;
          vkEnumerateInstanceExtensionProperties(NULL, &count, NULL);
          std::vector<VkExtensionProperties> avail(count);
-@@ -4688,7 +4714,67 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
+@@ -4688,7 +4727,67 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
          }
      }
  
@@ -543,10 +708,20 @@ index a15376e4c..d6a01642a 100644
  // get CK_ value from human-readable name
  s32 inputGetContKeyByName(const char *name);
 diff --git a/port/include/video.h b/port/include/video.h
-index 4fad217b1..a024b6652 100644
+index 4fad217b1..052e9ba9d 100644
 --- a/port/include/video.h
 +++ b/port/include/video.h
-@@ -205,4 +205,10 @@ void videoFreeCachedTextures(const void *start, const void *end);
+@@ -84,6 +84,9 @@ void videoSetSupersampling(s32 mode);
+ // Video.TAA: temporal anti-aliasing of the world (gfx_pc.cpp, gSPTaaEXT). It
+ // needs a single-sampled frame, so it and MSAA each turn the other off. Live.
+ s32 videoGetTaa(void);
++// Retro mode: the game at 4:3 through a CRT filter (Video.RetroMode, Vulkan)
++s32 videoGetRetroMode(void);
++void videoSetRetroMode(s32 on);
+ void videoSetTaa(s32 on);
+ 
+ #define VIDEO_RENDERER_OPENGL 0
+@@ -205,4 +208,10 @@ void videoFreeCachedTextures(const void *start, const void *end);
  void videoRestoreDesktop(void);
  void videoShutdown(void);
  
@@ -1914,8 +2089,171 @@ index 3842267e4..79d52900f 100644
  
  #include <stdlib.h>
  #include <stdio.h>
+diff --git a/port/src/netlobbymenu.c b/port/src/netlobbymenu.c
+index c927e5ead..69ae77145 100644
+--- a/port/src/netlobbymenu.c
++++ b/port/src/netlobbymenu.c
+@@ -2,6 +2,7 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <strings.h>
++#include <ctype.h>
+ #include <math.h>
+ #include <PR/ultratypes.h>
+ #include <ultra64.h>
+@@ -79,6 +80,8 @@ static char s_JoinPassword[NETLOBBY_MAXPASSWORD + 1];
+ static char s_ChatLine[NETLOBBY_MAXCHATTEXT + 1];
+ static struct netlobbycreate s_Create = { "", "", 4 };
+ static char s_JoinId[9];
++static char s_JoinCode[MPSETUP_MAXNAME + 1];
++extern struct menudialogdef g_NetJoinCodeMenuDialog;
+ static s32 s_WaitingForRoom = 0; // a join or create is in flight from these pages
+ static char s_Status[320];
+ static char s_BriefingNote[160]; // why the focused room cannot be joined
+@@ -1650,7 +1653,7 @@ static MenuItemHandlerResult handlerRoomList(s32 operation, struct menuitem *ite
+ 
+ 	switch (operation) {
+ 	case MENUOP_GETOPTIONCOUNT:
+-		data->list.value = n + 2;
++		data->list.value = n + 3; // the rooms, Create Room, Join by Code, Refresh List
+ 		break;
+ 	case MENUOP_GETOPTIONTEXT:
+ 		return (intptr_t)"";
+@@ -1683,6 +1686,13 @@ static MenuItemHandlerResult handlerRoomList(s32 operation, struct menuitem *ite
+ 			break;
+ 		}
+ 
++		if (index == n + 1) {
++			netLobbyClearMessage();
++			s_JoinCode[0] = '\0';
++			menuPushDialog(&g_NetJoinCodeMenuDialog);
++			break;
++		}
++
+ 		if (index > n) {
+ 			s_BriefingNote[0] = '\0';
+ 			netLobbyClearMessage();
+@@ -1732,7 +1742,7 @@ static MenuItemHandlerResult handlerRoomList(s32 operation, struct menuitem *ite
+ 
+ 			if (index >= n) {
+ 				// Create Room, Refresh: the reference's Create Game card
+-				const char *label = index == n ? "Create Room" : "Refresh List";
++				const char *label = index == n ? "Create Room" : index == n + 1 ? "Join by Code" : "Refresh List";
+ 				const s32 font = index == n ? LOBBYFONT_MD : LOBBYFONT_SM;
+ 
+ 				w = lobbyTextWidth(label, font);
+@@ -2029,6 +2039,12 @@ static const char *briefingCardText(struct menudialog *dialog, const char **titl
+ 	}
+ 
+ 	if (index == n + 1) {
++		*title = "Join by Code";
++
++		return "Type the eight-letter code a friend's room shows next to its name, and join it straight away.";
++	}
++
++	if (index == n + 2) {
+ 		*title = "Refresh List";
+ 
+ 		return "Ask the lobby for the rooms again. The list also refreshes itself every 10 seconds.";
+@@ -2120,7 +2136,13 @@ static Gfx *lobbyBriefingRoomWindow(Gfx *gdl, struct menudialog *dialog, s32 x1,
+ 		return lobbyParagraph(gdl, text, tx, &y, inner, normal, (y2 - 2 - y) / LOBBY_XSROW);
+ 	}
+ 
+-	gdl = lobbyTitleLine(gdl, r->name, "", tx, &y, inner, normal);
++	{
++		char code[24];
++
++		snprintf(code, sizeof(code), "  Code %s", r->id);
++		for (char *c = code + 7; *c; c++) *c = toupper((u8)*c);
++		gdl = lobbyTitleLine(gdl, r->name, code, tx, &y, inner, normal);
++	}
+ 
+ 	if (r->compat != NETLOBBY_COMPAT_OK) {
+ 		gdl = lobbyParagraph(gdl, netLobbyCompatText(r->compat), tx, &y, inner, lobbyAlpha(0xffff6000, alpha), 3);
+@@ -2233,6 +2255,70 @@ struct menudialogdef g_NetJoinPasswordMenuDialog = {
+ 	NULL,
+ };
+ 
++// Join by Code: a room's id, which the room shows as its code
++static MenuItemHandlerResult handlerJoinCode(s32 operation, struct menuitem *item, union handlerdata *data)
++{
++	char id[9];
++	s32 len = 0;
++
++	switch (operation) {
++	case MENUOP_GETTEXT:
++		snprintf(data->keyboard.string, MPSETUP_MAXNAME + 1, "%s", s_JoinCode);
++		break;
++	case MENUOP_SETTEXT:
++		snprintf(s_JoinCode, sizeof(s_JoinCode), "%s", data->keyboard.string);
++		break;
++	case MENUOP_SET:
++		// eight hex digits whatever the case, spaces dropped
++		for (const char *c = s_JoinCode; *c && len < 9; c++) {
++			if (isxdigit((u8)*c)) {
++				id[len++] = tolower((u8)*c);
++			} else if (*c != ' ' && *c != '-') {
++				len = 9;
++			}
++		}
++
++		if (len != 8) {
++			netLobbySetMessage("A room code is eight letters and numbers.");
++			menuPlaySound(MENUSOUND_ERROR);
++			break;
++		}
++
++		id[8] = '\0';
++		snprintf(s_JoinId, sizeof(s_JoinId), "%s", id);
++
++		for (s32 i = 0; i < netLobbyNumRooms(); i++) {
++			const struct netlobbyroomsum *r = netLobbyRoomAt(i);
++
++			if (r && r->locked && !strcmp(r->id, id)) {
++				menuPushDialog(&g_NetJoinPasswordMenuDialog);
++				return 0;
++			}
++		}
++
++		s_WaitingForRoom = 1;
++		netLobbyJoin(id, "");
++		break;
++	}
++
++	return 0;
++}
++
++static struct menuitem s_JoinCodeItems[] = {
++	{ MENUITEMTYPE_LABEL, 0, MENUITEMFLAG_LITERAL_TEXT | MENUITEMFLAG_LESSLEFTPADDING | MENUITEMFLAG_SMALLFONT, (uintptr_t)"The code is next to the room's name.\n", 0, NULL },
++	{ MENUITEMTYPE_KEYBOARD, 8, 0, 0, 0, handlerJoinCode },
++	{ MENUITEMTYPE_END },
++};
++
++struct menudialogdef g_NetJoinCodeMenuDialog = {
++	MENUDIALOGTYPE_DEFAULT,
++	(uintptr_t)"Join by Code",
++	s_JoinCodeItems,
++	NULL,
++	MENUDIALOGFLAG_LITERAL_TEXT,
++	NULL,
++};
++
+ /*
+  * Create Room
+  */
+@@ -4797,7 +4883,9 @@ static Gfx *lobbyPreviewWindow(Gfx *gdl, struct menudialog *dialog, s32 x1, s32
+ 	snprintf(preview.sum.host, sizeof(preview.sum.host), "%s", netLobbyAccount());
+ 
+ 	if (settings && room->valid) {
+-		snprintf(tail, sizeof(tail), " (%d/%d)", room->sum.humans, room->sum.maxhumans);
++		// the room code: friends type it on Join by Code rather than finding the room in the list
++		snprintf(tail, sizeof(tail), " (%d/%d)  Code %s", room->sum.humans, room->sum.maxhumans, room->sum.id);
++		for (char *c = strstr(tail, "Code ") + 5; *c; c++) *c = toupper((u8)*c);
+ 		gdl = lobbyTitleLine(gdl, room->sum.name, tail, tx, &y, inner, normal);
+ 	} else {
+ 		snprintf(tail, sizeof(tail), " (1/%d)", s_Create.maxhumans);
 diff --git a/port/src/optionsmenu.c b/port/src/optionsmenu.c
-index 76cceaa09..f63f5ca1c 100644
+index 76cceaa09..49178b997 100644
 --- a/port/src/optionsmenu.c
 +++ b/port/src/optionsmenu.c
 @@ -2620,7 +2620,7 @@ static MenuItemHandlerResult menuhandlerBind(s32 operation, struct menuitem *ite
@@ -1945,7 +2283,7 @@ index 76cceaa09..f63f5ca1c 100644
  			keyname[sizeof(keyname) - 1] = '\0';
  			for (char *p = keyname; *p; ++p) {
  				if (*p == '_') *p = ' ';
-@@ -7928,7 +7928,158 @@ struct menudialogdef g_ExtendedAdvancedMenuDialog = {
+@@ -7928,7 +7928,179 @@ struct menudialogdef g_ExtendedAdvancedMenuDialog = {
  	NULL,
  };
  
@@ -2013,6 +2351,19 @@ index 76cceaa09..f63f5ca1c 100644
 +	return 0;
 +}
 +
++static MenuItemHandlerResult menuhandlerPs5Retro(s32 operation, struct menuitem *item, union handlerdata *data)
++{
++	switch (operation) {
++	case MENUOP_GET:
++		return videoGetRetroMode();
++	case MENUOP_SET:
++		videoSetRetroMode(data->checkbox.value);
++		break;
++	}
++
++	return 0;
++}
++
 +static MenuDialogHandlerResult menudialogPs5Setup(s32 operation, struct menudialogdef *dialogdef, union handlerdata *data)
 +{
 +	if (operation == MENUOP_CLOSE && !g_Ps5SetupDone) {
@@ -2039,6 +2390,14 @@ index 76cceaa09..f63f5ca1c 100644
 +		(uintptr_t)"Display Mode",
 +		0,
 +		menuhandlerPs5DisplayMode,
++	},
++	{
++		MENUITEMTYPE_CHECKBOX,
++		0,
++		MENUITEMFLAG_LITERAL_TEXT,
++		(uintptr_t)"Retro Mode (4:3 CRT)",
++		0,
++		menuhandlerPs5Retro,
 +	},
 +	{
 +		MENUITEMTYPE_DROPDOWN,
@@ -2364,11 +2723,14 @@ index 06123262a..d43711808 100644
  		break;
  	}
 diff --git a/port/src/video.c b/port/src/video.c
-index 1481b7a61..21cc51dc9 100644
+index 1481b7a61..f3c6787bf 100644
 --- a/port/src/video.c
 +++ b/port/src/video.c
-@@ -77,6 +77,17 @@ static s32 vidSupersampling = 0;
+@@ -75,8 +75,20 @@ static const f32 vidUpscalingScales[VIDEO_UPSCALING_COUNT] = { 1.f, 1.f / 1.3f,
+ // chain's copy. Wins over Upscaling if an ini has both.
+ static s32 vidSupersampling = 0;
  static s32 vidTaa = 0;
++static s32 vidRetro = 0; // Video.RetroMode: 4:3 through a CRT filter (Vulkan)
  static const f32 vidSupersamplingScales[VIDEO_SUPERSAMPLING_COUNT] = { 1.f, 1.5f, 2.f };
  static s32 vidFramerateLimit = 0;
 +#ifdef PLATFORM_PS5
@@ -2385,7 +2747,15 @@ index 1481b7a61..21cc51dc9 100644
  // Video.Renderer: VIDEO_RENDERER_OPENGL or VIDEO_RENDERER_VULKAN, taking
  // effect at the next start. vidRendererActive is what this run got, which is
  // OpenGL whenever Vulkan was asked for and could not start.
-@@ -276,6 +287,16 @@ s32 videoInit(void)
+@@ -268,6 +280,7 @@ s32 videoInit(void)
+ 	}
+ 	gfx_msaa_level = vidMSAA;
+ 	gfx_taa = vidTaa;
++	gfx_retro = vidRetro;
+ 	videoSetSmaa(vidSmaa);
+ 	if (vidSupersampling != VIDEO_SUPERSAMPLING_OFF) {
+ 		videoSetSupersampling(vidSupersampling);
+@@ -276,6 +289,16 @@ s32 videoInit(void)
  	}
  	videoSetFsrSharpness(vidFsrSharpness);
  
@@ -2402,7 +2772,7 @@ index 1481b7a61..21cc51dc9 100644
  	struct GfxInitSettings set = {
  		.wapi = wmAPI,
  		.rapi = renderingAPI,
-@@ -297,6 +318,10 @@ s32 videoInit(void)
+@@ -297,6 +320,10 @@ s32 videoInit(void)
  
  #ifdef PD_HAVE_VULKAN
  	if (renderingAPI == &gfx_vulkan_api && gfx_vulkan_failed()) {
@@ -2413,7 +2783,7 @@ index 1481b7a61..21cc51dc9 100644
  		// The window goes and comes back for OpenGL; the setting is left as it
  		// is, so a driver installed later is picked up without visiting the menu
  		sysLogPrintf(LOG_WARNING, "VIDEO: Vulkan could not start, using OpenGL");
-@@ -311,6 +336,11 @@ s32 videoInit(void)
+@@ -311,6 +338,11 @@ s32 videoInit(void)
  
  	sysLogPrintf(LOG_NOTE, "VIDEO: renderer %s", renderingAPI->get_name());
  
@@ -2425,7 +2795,7 @@ index 1481b7a61..21cc51dc9 100644
  	videoInitDisplayModes();
  	videoSetVsync(vidVsync);
  	videoSetFramerateLimit(vidFramerateLimit);
-@@ -1115,6 +1145,34 @@ void videoSetSmaa(s32 on)
+@@ -1115,6 +1147,34 @@ void videoSetSmaa(s32 on)
  	gfx_post_smaa = vidSmaa;
  }
  
@@ -2460,7 +2830,25 @@ index 1481b7a61..21cc51dc9 100644
  s32 videoGetUpscaling(void)
  {
  	return vidUpscaling;
-@@ -1349,6 +1407,9 @@ PD_CONSTRUCTOR static void videoConfigInit(void)
+@@ -1130,6 +1190,17 @@ void videoSetUpscaling(s32 mode)
+ 	}
+ }
+ 
++s32 videoGetRetroMode(void)
++{
++	return vidRetro;
++}
++
++void videoSetRetroMode(s32 on)
++{
++	vidRetro = !!on;
++	gfx_retro = vidRetro;
++}
++
+ s32 videoGetTaa(void)
+ {
+ 	return vidTaa;
+@@ -1349,6 +1420,9 @@ PD_CONSTRUCTOR static void videoConfigInit(void)
  	configRegisterInt("Video.VSync", &vidVsync, -1, 10);
  	configRegisterInt("Video.FramebufferEffects", &vidFramebuffers, 0, 1);
  	configRegisterInt("Video.FramerateLimit", &vidFramerateLimit, 0, VIDEO_MAX_FPS);
@@ -2470,6 +2858,14 @@ index 1481b7a61..21cc51dc9 100644
  	configRegisterInt("Video.DisplayFPS", &vidDisplayFPS, 0, 1);
  	configRegisterFloat("Video.DisplayFPSInterval", &vidDisplayFPSInterval, 0.01f, 32.f);
  	configRegisterInt("Video.MSAA", &vidMSAA, 1, 16);
+@@ -1356,6 +1430,7 @@ PD_CONSTRUCTOR static void videoConfigInit(void)
+ 	configRegisterInt("Video.Upscaling", &vidUpscaling, 0, VIDEO_UPSCALING_COUNT - 1);
+ 	configRegisterInt("Video.Supersampling", &vidSupersampling, 0, VIDEO_SUPERSAMPLING_COUNT - 1);
+ 	configRegisterInt("Video.TAA", &vidTaa, 0, 1);
++	configRegisterInt("Video.RetroMode", &vidRetro, 0, 1);
+ 	configRegisterFloat("Video.FsrSharpness", &vidFsrSharpness, 0.f, 2.f);
+ 	configRegisterInt("Video.Renderer", &vidRenderer, VIDEO_RENDERER_OPENGL, VIDEO_RENDERER_VULKAN);
+ 	configRegisterInt("Video.GpuVertices", &vidGpuVertices, 0, 1);
 diff --git a/src/game/bondmove.c b/src/game/bondmove.c
 index 41fc439cd..e528c23f9 100644
 --- a/src/game/bondmove.c

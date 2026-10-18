@@ -51,6 +51,8 @@ Everything the game writes (settings in `pd.ini`, saves, the log) stays in that 
   `Video.PS5DisplayMode` (0 or 1); until it is chosen, a 120 Hz TV gets Performance.
 - **A settings page at the first start** with the display mode, texture pack, gyro and adaptive
   triggers in one place. It is **Extended Options → PS5** afterwards.
+- **Retro mode:** the original 4:3 picture between black bars, through a CRT filter (scanlines,
+  an aperture grille, a slight curve). On the PS5 Settings page, or `Video.RetroMode=1`.
 - **Rest mode:** the game picks up where it was when the console wakes, rather than running the
   minutes it slept in one step. An online match does not survive it.
 - **Get Mods and Maps:** a page under **Perfect Dark Mods** that downloads mods and Combat
@@ -100,6 +102,9 @@ for the Xbox 360 release's models, which need that release in `added-content/`.
 - **Split-screen:** connect up to four controllers and start a Combat Simulator match as on the N64.
 - **Online:** **Online Game** on the main menu. Sign in with a Ghost Trials name and PIN (a new name
   makes the account), then Browse Rooms or Create Room. Co-op and counter-op missions work too.
+  Every room shows an eight-character **room code** next to its name: friends pick **Join by
+  Code** in the room list and type it to go straight in. The code is the lobby's own room id, so a
+  PC player's room has one too, though only the PS5 build shows it.
   Hosting works without opening ports; forwarding **UDP 27100** to the PS5 makes joins direct.
 
 ## When something goes wrong
