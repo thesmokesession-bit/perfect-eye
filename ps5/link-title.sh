@@ -58,6 +58,9 @@ path_wraps=()
 for name in chdir stat open fopen mkdir rmdir unlink remove rename truncate chmod opendir realpath; do
     path_wraps+=("--wrap=$name")
 done
+# fcntl answers EINVAL to a socket's close-on-exec, which curl took as a failed socket and so
+# never connected anywhere (ps5_platform.c's __wrap_fcntl)
+path_wraps+=("--wrap=fcntl")
 
 # AGC comes from system modules; these host-link stubs only name the imports.
 stub() {

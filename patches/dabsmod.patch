@@ -1384,16 +1384,48 @@ index 1907f81fe..ebb17da0d 100644
  	snprintf(g_NoticeTitle, sizeof(g_NoticeTitle), "CONVERTING %s", name);
  	for (char *c = g_NoticeTitle; *c; ++c) {
 diff --git a/port/src/ghostnet.c b/port/src/ghostnet.c
-index ecfb59a65..53a2a6281 100644
+index ecfb59a65..ac151a290 100644
 --- a/port/src/ghostnet.c
 +++ b/port/src/ghostnet.c
-@@ -794,6 +794,10 @@ bool ghostnetSend(const struct ghostnetreq *req, struct ghostnetbuf *buf,
+@@ -769,6 +769,27 @@ static size_t ghostnetCurlWrite(void *ptr, size_t size, size_t nmemb, void *arg)
+ 	return ghostnetBufAppend(arg, ptr, add) ? add : 0;
+ }
+ 
++#ifdef PLATFORM_PS5
++static int ghostnetCurlDebug(CURL *handle, curl_infotype type, char *data, size_t size, void *arg)
++{
++	char line[256];
++	size_t n;
++
++	if (type != CURLINFO_TEXT) {
++		return 0;
++	}
++
++	n = size < sizeof(line) - 1 ? size : sizeof(line) - 1;
++	memcpy(line, data, n);
++	while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) {
++		n--;
++	}
++	line[n] = '\0';
++	sysLogPrintf(LOG_NOTE, "curl: %s", line);
++	return 0;
++}
++#endif
++
+ static int ghostnetCurlProgress(void *arg, curl_off_t dltotal, curl_off_t dlnow, curl_off_t ultotal, curl_off_t ulnow)
+ {
+ 	const struct ghostnetreq *req = arg;
+@@ -794,6 +815,14 @@ bool ghostnetSend(const struct ghostnetreq *req, struct ghostnetbuf *buf,
  	}
  
  	curl_easy_setopt(curl, CURLOPT_URL, req->url);
 +#ifdef PLATFORM_PS5
 +	// No system CA store on the console: the title ships Mozilla's bundle
 +	curl_easy_setopt(curl, CURLOPT_CAINFO, "/app0/cacert.pem");
++	// curl's own account of the connection into the log: online play could not connect
++	// from the console and nothing said why (2026-10-18)
++	curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, ghostnetCurlDebug);
++	curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
 +#endif
  	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, ghostnetCurlWrite);
  	curl_easy_setopt(curl, CURLOPT_WRITEDATA, buf);

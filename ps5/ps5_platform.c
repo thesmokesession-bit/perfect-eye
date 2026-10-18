@@ -15,12 +15,19 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <errno.h>
 #include <fcntl.h>
+#include <sys/ioctl.h>
+#include <sys/filio.h>
 #include <time.h>
 #include <ucontext.h>
 #include <unistd.h>
 
 int main(int argc, const char **argv);
+int sceKernelAvailableFlexibleMemorySize(size_t *size);
+int sceKernelAvailableDirectMemorySize(off_t start, off_t end, size_t align, off_t *start_out, size_t *size_out);
+size_t sceKernelGetDirectMemorySize(void);
+
 int sceSystemServiceHideSplashScreen(void);
 
 /* A system notification (the toast at the top right) and the same line in the log: what the
@@ -283,7 +290,15 @@ static void *watchdog(void *arg)
 			_Exit(139);
 		}
 		const unsigned frames = ps5_frames_started;
-		watch_printf("%ds: %u frames started, %u presented\n", t, frames, ps5_presents);
+		{
+			/* memory, for a game the system ends without a signal (out of it, perhaps) */
+			size_t flex = 0, dsize = 0;
+			off_t dstart = 0;
+			sceKernelAvailableFlexibleMemorySize(&flex);
+			sceKernelAvailableDirectMemorySize(0, (off_t)sceKernelGetDirectMemorySize(), 0, &dstart, &dsize);
+			watch_printf("%ds: %u frames started, %u presented; free flexible %zu MB, direct %zu MB\n", t, frames,
+				ps5_presents, flex >> 20, dsize >> 20);
+		}
 		still = (frames == last) ? still + 1 : 0;
 		last = frames;
 		if (frames > 0 && still >= 2 && samples < 3) {
@@ -319,10 +334,8 @@ extern void sceImeDialogInit(void);
 extern void sceImeDialogTerm(void);
 extern void sceKernelAllocateDirectMemory(void);
 extern void sceKernelAllocateMainDirectMemory(void);
-extern void sceKernelAvailableDirectMemorySize(void);
 extern void sceKernelCreateEqueue(void);
 extern void sceKernelDeleteEqueue(void);
-extern void sceKernelGetDirectMemorySize(void);
 extern void sceKernelMapDirectMemory(void);
 extern void sceKernelMprotect(void);
 extern void sceKernelMunmap(void);
@@ -553,6 +566,8 @@ int pd_ps5_getaddrinfo(const char *node, const char *service, const struct addri
 		return EAI_FAIL;
 	}
 	*res = NULL;
+	watch_printf("getaddrinfo %s port %s family %d socktype %d\n", node ? node : "(none)", service ? service : "-",
+		family, hints ? hints->ai_socktype : -1);
 	if (family != AF_UNSPEC && family != AF_INET && family != AF_INET6) {
 		return EAI_FAMILY;
 	}
@@ -624,6 +639,11 @@ int pd_ps5_getaddrinfo(const char *node, const char *service, const struct addri
 		b->ai.ai_addrlen = sizeof(*sin);
 	}
 	*res = &b->ai;
+	{
+		char text[64] = "";
+		inet_ntop(b->ai.ai_family, is6 ? (const void *)&v6 : (const void *)&v4, text, sizeof(text));
+		watch_printf("getaddrinfo %s -> %s\n", node ? node : "(none)", text);
+	}
 	return 0;
 }
 
@@ -636,6 +656,43 @@ void pd_ps5_freeaddrinfo(struct addrinfo *ai)
 	}
 }
 
+/* fcntl, as the title's code calls it (link-title.sh wraps the name). The console answers
+ * EINVAL to F_SETFD's close-on-exec on a socket, and curl gave up on every connection over
+ * it ("fcntl set CLOEXEC: Invalid argument", 2026-10-18): there is no exec on the console, so
+ * that is done. A non-blocking mode it refuses goes through FIONBIO instead. */
+int __real_fcntl(int fd, int cmd, ...);
+int __wrap_fcntl(int fd, int cmd, ...)
+{
+	va_list args;
+	va_start(args, cmd);
+	const long arg = va_arg(args, long);
+	va_end(args);
+	const int r = __real_fcntl(fd, cmd, arg);
+	if (r == -1 && errno == EINVAL) {
+		static int told_setfd, told_setfl;
+		if (cmd == F_SETFD) {
+			if (!told_setfd) {
+				told_setfd = 1;
+				watch_printf("fcntl F_SETFD 0x%lx on %d refused; taken as done\n", arg, fd);
+			}
+			return 0;
+		}
+		if (cmd == F_SETFL) {
+			int on = (arg & O_NONBLOCK) != 0;
+			const int io = ioctl(fd, FIONBIO, &on);
+			if (!told_setfl) {
+				told_setfl = 1;
+				watch_printf("fcntl F_SETFL 0x%lx on %d refused; FIONBIO %d\n", arg, fd, io);
+			}
+			if (io == 0) {
+				return 0;
+			}
+			errno = EINVAL;
+		}
+	}
+	return r;
+}
+
 /* ps5_rom.c: the player's ROMs put where the game looks for them */
 void ps5ImportRoms(void);
 
@@ -646,9 +703,18 @@ void ps5PlatformInit(int *argc, const char ***argv)
 	struct sigaction action;
 	memset(&action, 0, sizeof(action));
 	action.sa_sigaction = on_signal;
-	action.sa_flags = SA_SIGINFO;
+	action.sa_flags = SA_SIGINFO | SA_ONSTACK;
+	{
+		/* the game thread's report even when it ran out of stack */
+		static char alt[64 * 1024];
+		stack_t ss = { .ss_sp = alt, .ss_size = sizeof(alt), .ss_flags = 0 };
+		sigaltstack(&ss, NULL);
+	}
 	sigemptyset(&action.sa_mask);
-	const int sigs[] = { SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGSYS };
+	/* Every signal whose default ends the process: online play ended it with none of the
+	 * first six (2026-10-18), and an unhandled one leaves no report */
+	const int sigs[] = { SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGSYS, SIGTRAP, SIGTERM, SIGHUP, SIGINT,
+		SIGQUIT, SIGALRM, SIGVTALRM, SIGPROF, SIGXCPU, SIGXFSZ, SIGUSR2 };
 	for (size_t i = 0; i < sizeof(sigs) / sizeof(sigs[0]); i++) {
 		sigaction(sigs[i], &action, NULL);
 	}
