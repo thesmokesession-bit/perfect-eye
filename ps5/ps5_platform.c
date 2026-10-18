@@ -19,6 +19,40 @@
 int main(int argc, const char **argv);
 int sceSystemServiceHideSplashScreen(void);
 
+/* A system notification (the toast at the top right) and the same line in the log: what the
+ * player sees of a slow first start or of a game that cannot start, before there is a picture */
+typedef struct {
+	char useless[45];
+	char message[3075];
+} notify_request_t;
+int sceKernelSendNotificationRequest(int device, notify_request_t *req, size_t size, int blocking);
+
+void ps5Notify(const char *fmt, ...)
+{
+	static notify_request_t req;
+	va_list args;
+	memset(&req, 0, sizeof(req));
+	va_start(args, fmt);
+	vsnprintf(req.message, sizeof(req.message), fmt, args);
+	va_end(args);
+	printf("PS5: notification: %s\n", req.message);
+	fflush(stdout);
+	sceKernelSendNotificationRequest(0, &req, sizeof(req), 0);
+}
+
+/* The system's splash screen (the title's own pic) stays up through the load and comes down
+ * with the first picture the game presents (gfx_vulkan.cpp), rather than leaving a black
+ * screen that looks like nothing is happening. */
+void ps5FirstFrame(void)
+{
+	static int done;
+	if (!done) {
+		done = 1;
+		sceSystemServiceHideSplashScreen();
+		printf("PS5: first frame, splash screen down\n");
+	}
+}
+
 #define LOG_PATH "/app0/pd.log"
 #define LOG_BUFFER_SIZE (64 * 1024)
 
@@ -90,6 +124,11 @@ static void on_signal(int sig, siginfo_t *info, void *context)
 	fflush(stderr);
 	const mcontext_t *mc = &((ucontext_t *)context)->uc_mcontext;
 	raw_printf("FATAL: signal %d at address %p\n", sig, info ? info->si_addr : NULL);
+	{
+		static notify_request_t req;
+		snprintf(req.message, sizeof(req.message), "Perfect Dark crashed (signal %d). pd.log in its folder says where.", sig);
+		sceKernelSendNotificationRequest(0, &req, sizeof(req), 0);
+	}
 	raw_printf("  rip %p rsp %p rbp %p (main at %p)\n", (void *)mc->mc_rip, (void *)mc->mc_rsp,
 		(void *)mc->mc_rbp, (void *)&main);
 	const uintptr_t code_start = (uintptr_t)&main & ~(uintptr_t)0xffffff;
@@ -127,9 +166,6 @@ void ps5PlatformInit(int *argc, const char ***argv)
 	/* There is no video driver for the console's display: the window is an offscreen window,
 	 * and the Vulkan renderer presents through VK_KHR_display (gfx_vulkan.cpp, __PROSPERO__). */
 	SDL_SetHint(SDL_HINT_VIDEODRIVER, "offscreen");
-	/* The system's splash screen stays over the title's output until the title hides it. */
-	sceSystemServiceHideSplashScreen();
-
 	ps5ImportRoms();
 
 	/* Online play (ENet) runs on one dual-stack IPv6 UDP socket. Whether the console's

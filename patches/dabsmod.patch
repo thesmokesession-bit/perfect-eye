@@ -247,10 +247,10 @@ index 4c149b586..55c9dfb4b 100644
  };
  
 diff --git a/port/fast3d/gfx_vulkan.cpp b/port/fast3d/gfx_vulkan.cpp
-index 687f3fa7b..338590d07 100644
+index 687f3fa7b..76124a179 100644
 --- a/port/fast3d/gfx_vulkan.cpp
 +++ b/port/fast3d/gfx_vulkan.cpp
-@@ -60,6 +60,17 @@
+@@ -60,6 +60,19 @@
  #include <SDL_vulkan.h>
  #include <shaderc/shaderc.h>
  
@@ -262,13 +262,27 @@ index 687f3fa7b..338590d07 100644
 +// The display mode's refresh rate in millihertz (119880 when the TV took the PS5's 120 Hz
 +// output, which param.json's attribute3 asks for), for video.c to raise the frame rate.
 +extern "C" int g_Ps5DisplayRefreshMhz;
++// ps5_platform.c: the system's splash screen comes down at the first picture
++extern "C" void ps5FirstFrame(void);
 +int g_Ps5DisplayRefreshMhz = 0;
 +#endif
 +
  #ifndef _LANGUAGE_C
  #define _LANGUAGE_C
  #endif
-@@ -4054,7 +4065,7 @@ static void vk_grade_frame(void) {
+@@ -1444,6 +1457,11 @@ static void vk_run_job(const VkJob &job) {
+         pi.pSwapchains = &vk_swapchain;
+         pi.pImageIndices = &index;
+         const VkResult pr = vkQueuePresentKHR(vk_queue, &pi);
++#if defined(__PROSPERO__)
++        if (pr == VK_SUCCESS || pr == VK_SUBOPTIMAL_KHR) {
++            ps5FirstFrame();
++        }
++#endif
+         if (pr == VK_ERROR_OUT_OF_DATE_KHR || pr == VK_SUBOPTIMAL_KHR || r == VK_SUBOPTIMAL_KHR) {
+             vk_swap_dirty_async = true;
+         }
+@@ -4054,7 +4072,7 @@ static void vk_grade_frame(void) {
   */
  static VkPipeline vk_post_pipelines[GFX_POST_NUM_PASSES];
  static bool vk_post_pipeline_failed[GFX_POST_NUM_PASSES];
@@ -277,7 +291,7 @@ index 687f3fa7b..338590d07 100644
  static uint32_t vk_post_area_tex, vk_post_search_tex;
  static bool vk_post_failed;
  
-@@ -4180,6 +4191,10 @@ static bool gfx_vk_post_process(int fb_src, bool smaa, bool fsr, float sharpness
+@@ -4180,6 +4198,10 @@ static bool gfx_vk_post_process(int fb_src, bool smaa, bool fsr, float sharpness
      const uint32_t sw = in->width, sh = in->height;
      const bool scaled = sw != win.width || sh != win.height;
      bool ok = true;
@@ -288,7 +302,7 @@ index 687f3fa7b..338590d07 100644
  
      if (smaa) {
          if (!vk_post_area_tex) {
-@@ -4191,7 +4206,7 @@ static bool gfx_vk_post_process(int fb_src, bool smaa, bool fsr, float sharpness
+@@ -4191,7 +4213,7 @@ static bool gfx_vk_post_process(int fb_src, bool smaa, bool fsr, float sharpness
          ok = ok && vk_post_draw(GFX_POST_SMAA_EDGES, vk_post_edges, in, NULL, NULL, 0, 0, 0.f, 0.f, true);
          ok = ok && vk_post_draw(GFX_POST_SMAA_WEIGHTS, vk_post_weights, &vk_post_edges, NULL, NULL,
                                  vk_post_slot(vk_post_area_tex), vk_post_slot(vk_post_search_tex), 0.f, 0.f, false);
@@ -297,7 +311,7 @@ index 687f3fa7b..338590d07 100644
                                  0.f, 0.f, false);
          in = &vk_post_smaa_out;
      }
-@@ -4200,12 +4215,21 @@ static bool gfx_vk_post_process(int fb_src, bool smaa, bool fsr, float sharpness
+@@ -4200,12 +4222,21 @@ static bool gfx_vk_post_process(int fb_src, bool smaa, bool fsr, float sharpness
          if (fsr && vk_post_target(vk_post_easu, win.width, win.height) &&
              vk_post_draw(GFX_POST_EASU, vk_post_easu, in, NULL, NULL, 0, 0, (float)win.width, (float)win.height,
                           false)) {
@@ -322,7 +336,7 @@ index 687f3fa7b..338590d07 100644
      }
  
      vk_bound_pipeline = VK_NULL_HANDLE;
-@@ -4578,8 +4602,12 @@ static PFN_vkGetInstanceProcAddr vk_load_loader_headless(void) {
+@@ -4578,8 +4609,12 @@ static PFN_vkGetInstanceProcAddr vk_load_loader_headless(void) {
  static bool vk_init_instance(SDL_Window *wnd, bool debug) {
      const bool headless = gfx_sdl_vulkan_headless() != 0;
  
@@ -335,7 +349,7 @@ index 687f3fa7b..338590d07 100644
      if (!vk_get_instance_proc) {
          vk_fail("no Vulkan loader: %s", SDL_GetError());
          return false;
-@@ -4595,13 +4623,24 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
+@@ -4595,12 +4630,22 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
      if (vk_enumerate_instance_version) {
          vk_enumerate_instance_version(&loader_version);
      }
@@ -351,16 +365,22 @@ index 687f3fa7b..338590d07 100644
  
      std::vector<const char *> exts;
 +#if defined(__PROSPERO__)
++    // the display, not SDL: its offscreen window has no Vulkan surface to give
 +    exts.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
 +    exts.push_back(VK_KHR_DISPLAY_EXTENSION_NAME);
-+    if (false) {
 +#else
      if (headless) {
-+#endif
          uint32_t count = 0;
          vkEnumerateInstanceExtensionProperties(NULL, &count, NULL);
-         std::vector<VkExtensionProperties> avail(count);
-@@ -4688,7 +4727,67 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
+@@ -4623,6 +4668,7 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
+         exts.resize(n);
+         SDL_Vulkan_GetInstanceExtensions(wnd, &n, exts.data());
+     }
++#endif
+ 
+     std::vector<const char *> layers;
+     if (debug) {
+@@ -4688,6 +4734,64 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
          }
      }
  
@@ -421,13 +441,18 @@ index 687f3fa7b..338590d07 100644
 +        sysLogPrintf(LOG_NOTE, "Vulkan: display plane %ux%u at %u mHz (%s)", ext.width, ext.height,
 +                     modes[0].parameters.refreshRate, disp.displayName ? disp.displayName : "display");
 +    }
-+    if (false) {
 +#else
      if (headless) {
-+#endif
          // The swapchain takes the window's size (currentExtent is undefined
          // on a headless surface) and is read back like any other
-         PFN_vkCreateHeadlessSurfaceEXT create_headless =
+@@ -4707,6 +4811,7 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
+         vk_surface = VK_NULL_HANDLE;
+         return false;
+     }
++#endif
+ 
+     return true;
+ }
 diff --git a/port/include/external/enet.h b/port/include/external/enet.h
 index 0aebf703a..3e08a6dbd 100644
 --- a/port/include/external/enet.h
@@ -1077,6 +1102,36 @@ index fafdd8e28..156fb91b0 100644
 +}
 +
  #endif
+diff --git a/port/src/gexplusrom.c b/port/src/gexplusrom.c
+index 1907f81fe..ebb17da0d 100644
+--- a/port/src/gexplusrom.c
++++ b/port/src/gexplusrom.c
+@@ -578,6 +578,12 @@ static void gexPlusRomConvertGoldenEye(void)
+ 	}
+ 
+ 	sysLogPrintf(LOG_NOTE, "gexplus: converting %s into %s, this happens once", fsFullPath(search.path), dest);
++#ifdef PLATFORM_PS5
++	{
++		extern void ps5Notify(const char *fmt, ...);
++		ps5Notify("Converting GoldenEye's levels and missions. First start only, a few minutes.");
++	}
++#endif
+ 	snprintf(g_NoticeTitle, sizeof(g_NoticeTitle), "%s", NOTICE_TITLE_GOLDENEYE);
+ 
+ 	// a copy: fsFullPath()'s buffer is the next path's, and the stamp is written after many
+@@ -891,6 +897,12 @@ static void variantConvert(u8 *rom, u32 romlen, const char *name, const char *fr
+ 
+ 	existed = fsFileSize(dest) >= 0;
+ 	sysLogPrintf(LOG_NOTE, "gexplus: converting %s (%s) into %s, this happens once", name, from, dest);
++#ifdef PLATFORM_PS5
++	{
++		extern void ps5Notify(const char *fmt, ...);
++		ps5Notify("Converting GoldenEye's levels and missions. First start only, a few minutes.");
++	}
++#endif
+ 
+ 	snprintf(g_NoticeTitle, sizeof(g_NoticeTitle), "CONVERTING %s", name);
+ 	for (char *c = g_NoticeTitle; *c; ++c) {
 diff --git a/port/src/ghostnet.c b/port/src/ghostnet.c
 index ecfb59a65..53a2a6281 100644
 --- a/port/src/ghostnet.c
@@ -2938,10 +2993,27 @@ index b5b178af9..19caf8616 100644
  	// Mod Options is where that is asked for, and until it has been the key
  	// does nothing rather than failing loudly once a frame.
 diff --git a/port/src/system.c b/port/src/system.c
-index fffbe04b9..66a6bc5c9 100644
+index fffbe04b9..b03cfe6dd 100644
 --- a/port/src/system.c
 +++ b/port/src/system.c
-@@ -381,6 +381,12 @@ s32 sysRestartRequested(void)
+@@ -335,6 +335,16 @@ static void sysFatalV(s32 report, const char *fmt, va_list ap)
+ 	fflush(stdout);
+ 	fflush(stderr);
+ 
++#ifdef PLATFORM_PS5
++	// No dialog can be shown on the console (it waited on a black screen for
++	// ever): a notification says what went wrong, and the game closes.
++	{
++		extern void ps5Notify(const char *fmt, ...);
++		ps5Notify("Perfect Dark could not start: %s", shown);
++		_exit(1);
++	}
++#endif
++
+ 	// The dialog is a desktop window, and a desktop left at the game's
+ 	// exclusive resolution is a poor place to read one.
+ 	videoRestoreDesktop();
+@@ -381,6 +391,12 @@ s32 sysRestartRequested(void)
  
  void sysGetExecutablePath(char *outPath, const u32 outLen)
  {
@@ -2954,7 +3026,7 @@ index fffbe04b9..66a6bc5c9 100644
  	// try asking SDL
  	char *sdlPath = SDL_GetBasePath();
  
-@@ -415,6 +421,10 @@ void sysGetExecutablePath(char *outPath, const u32 outLen)
+@@ -415,6 +431,10 @@ void sysGetExecutablePath(char *outPath, const u32 outLen)
  
  void sysGetHomePath(char *outPath, const u32 outLen)
  {
@@ -2965,7 +3037,7 @@ index fffbe04b9..66a6bc5c9 100644
  	// try asking SDL
  	char *sdlPath = SDL_GetPrefPath("", "perfectdark");
  
-@@ -489,6 +499,14 @@ s32 sysMemReadableRange(const void *ptr, uintptr_t *lo, uintptr_t *hi)
+@@ -489,6 +509,14 @@ s32 sysMemReadableRange(const void *ptr, uintptr_t *lo, uintptr_t *hi)
  	*lo = (uintptr_t)mbi.BaseAddress;
  	*hi = (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
  

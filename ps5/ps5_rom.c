@@ -68,8 +68,11 @@ static int rom_identify(const char *path, char code[5])
 	return order;
 }
 
+void ps5Notify(const char *fmt, ...);
+
 static void import_pd_rom(const char *src, int order)
 {
+	ps5Notify("Perfect Dark: first start, setting up your ROM. This takes a moment.");
 	const char *dst = PS5_TITLE_DIR "/data/pd.ntsc-final.z64";
 	uint8_t *data = malloc(ROM_SIZE);
 	FILE *f = data ? fopen(src, "rb") : NULL;
