@@ -150,10 +150,23 @@ index 3d9344d6e..13e3f5ada 100644
  // What ended a batch and forced a draw call. See g_GfxFlushReasons.
  enum GfxFlushReason {
 diff --git a/port/fast3d/gfx_pc.cpp b/port/fast3d/gfx_pc.cpp
-index 0631a10b3..28825a698 100644
+index 0631a10b3..e21d4686e 100644
 --- a/port/fast3d/gfx_pc.cpp
 +++ b/port/fast3d/gfx_pc.cpp
-@@ -406,6 +406,7 @@ float gfx_color_saturation = 1.0f;
+@@ -26,6 +26,12 @@
+ #include <PR/gbi.h>
+ 
+ #include "platform.h"
++#ifdef PLATFORM_PS5
++extern "C" volatile unsigned ps5_frames_started; // ps5_platform.c's watchdog
++extern "C" void gfx_vk_hitch_counts(unsigned *compiles, unsigned *pipelines, unsigned *ms);
++extern "C" u32 g_TexpackHitchLoads;
++extern "C" u64 g_TexpackHitchUs;
++#endif
+ 
+ #include "gfx_pc.h"
+ #include "gfx_cc.h"
+@@ -406,6 +412,7 @@ float gfx_color_saturation = 1.0f;
  float gfx_color_contrast = 1.0f;
  float gfx_color_black_level = 0.0f;
  bool gfx_post_smaa = false;
@@ -161,7 +174,7 @@ index 0631a10b3..28825a698 100644
  float gfx_render_scale = 1.0f;
  #define GFX_MAX_RENDER_SIDE 8192u
  float gfx_fsr_sharpness = 0.2f;
-@@ -8694,6 +8695,12 @@ extern "C" void gfx_start_frame(void) {
+@@ -8694,8 +8701,46 @@ extern "C" void gfx_start_frame(void) {
  
      gfx_current_window_dimensions.aspect_ratio = (float)gfx_current_window_dimensions.width / gfx_current_window_dimensions.height;
  
@@ -173,8 +186,42 @@ index 0631a10b3..28825a698 100644
 +
      gfx_current_dimensions = gfx_current_window_dimensions;
  
++#ifdef PLATFORM_PS5
++    {
++        // the first console runs: the sizes the frame is drawn at, and that frames keep coming
++        static unsigned frames, hitches;
++        static uint64_t last;
++        const uint64_t now = sysGetMicroseconds();
++        frames++;
++        ps5_frames_started = frames;
++        // the stutters a player sees: a frame that took more than three vblanks, and what it
++        // was spent on (shaders and pipelines made, HD textures decoded)
++        unsigned compiles = 0, pipelines = 0, buildMs = 0;
++        static u32 texLoads;
++        static u64 texUs;
++        gfx_vk_hitch_counts(&compiles, &pipelines, &buildMs);
++        if (last && now - last > 50000 && hitches < 300) {
++            hitches++;
++            sysLogPrintf(LOG_NOTE, "gfx: frame %u came %u ms after the last: %u shaders, %u pipelines (%u ms), %u HD textures (%u ms)",
++                         frames, (unsigned)((now - last) / 1000), compiles, pipelines, buildMs,
++                         (unsigned)(g_TexpackHitchLoads - texLoads), (unsigned)((g_TexpackHitchUs - texUs) / 1000));
++        }
++        texLoads = g_TexpackHitchLoads;
++        texUs = g_TexpackHitchUs;
++        last = now;
++        if (frames <= 3 || frames % 600 == 0) {
++            sysLogPrintf(LOG_NOTE, "gfx: frame %u: window %ux%u, aspect %.3f, native aspect %.3f, viewport %ux%u", frames,
++                         gfx_current_window_dimensions.width, gfx_current_window_dimensions.height,
++                         gfx_current_window_dimensions.aspect_ratio, gfx_current_native_aspect,
++                         gfx_current_game_window_viewport.width, gfx_current_game_window_viewport.height);
++        }
++    }
++#endif
++
      // The render scale: FSR draws the game at a fraction of the window,
-@@ -8748,7 +8755,7 @@ extern "C" void gfx_start_frame(void) {
+     // supersampling at a multiple of it, and the window keeps its aspect ratio
+     // as the game's. A multiple stops at GFX_MAX_RENDER_SIDE on the longer
+@@ -8748,7 +8793,7 @@ extern "C" void gfx_start_frame(void) {
      // SMAA or a render scale: the frame goes through the backend's post
      // chain on its way to the window, from a single-sampled framebuffer
      game_post_processes = gfx_framebuffers_enabled && gfx_rapi->post_process &&
@@ -247,10 +294,19 @@ index 4c149b586..55c9dfb4b 100644
  };
  
 diff --git a/port/fast3d/gfx_vulkan.cpp b/port/fast3d/gfx_vulkan.cpp
-index 687f3fa7b..76124a179 100644
+index 687f3fa7b..a1f0bce57 100644
 --- a/port/fast3d/gfx_vulkan.cpp
 +++ b/port/fast3d/gfx_vulkan.cpp
-@@ -60,6 +60,19 @@
+@@ -54,12 +54,28 @@
+ #include <vector>
+ 
+ #include <SDL.h>
++#if defined(__PROSPERO__)
++#include <pthread.h>
++#endif
+ 
+ #define VK_NO_PROTOTYPES
+ #include <vulkan/vulkan.h>
  #include <SDL_vulkan.h>
  #include <shaderc/shaderc.h>
  
@@ -270,7 +326,67 @@ index 687f3fa7b..76124a179 100644
  #ifndef _LANGUAGE_C
  #define _LANGUAGE_C
  #endif
-@@ -1444,6 +1457,11 @@ static void vk_run_job(const VkJob &job) {
+@@ -1371,7 +1387,20 @@ static uint64_t vk_worker_done; // the last serial the worker has submitted
+ static bool vk_threaded;
+ static std::atomic<bool> vk_swap_dirty_async;
+ 
++#if defined(__PROSPERO__)
++} // namespace
++extern "C" volatile unsigned ps5_presents;
++extern "C" pthread_t ps5_worker_thread;
++extern "C" volatile int ps5_worker_known;
++namespace {
++#endif
+ static void vk_run_job(const VkJob &job) {
++#if defined(__PROSPERO__)
++    if (!ps5_worker_known) {
++        ps5_worker_thread = pthread_self();
++        ps5_worker_known = 1;
++    }
++#endif
+     VkSlot &sl = vk_slots[job.slot];
+     VkCommandBuffer cb = sl.cmd;
+ 
+@@ -1381,8 +1410,24 @@ static void vk_run_job(const VkJob &job) {
+     bool acquired = false;
+     VkResult r = VK_ERROR_OUT_OF_DATE_KHR;
+     if (job.present) {
++#if defined(__PROSPERO__)
++        const u64 acq0 = sysGetMicroseconds();
++#endif
+         r = vkAcquireNextImageKHR(vk_dev, vk_swapchain, UINT64_MAX, sl.acquired, VK_NULL_HANDLE, &index);
+         acquired = r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR;
++#if defined(__PROSPERO__)
++        {
++            // the first console runs: how the presents go
++            static u32 presents;
++            const u64 took = sysGetMicroseconds() - acq0;
++            presents++;
++            ps5_presents = presents;
++            if (presents <= 3 || presents % 600 == 0 || took > 100000) {
++                sysLogPrintf(LOG_NOTE, "Vulkan: present %u: acquire %d took %llu us, image %u", presents, (int)r,
++                             (unsigned long long)took, index);
++            }
++        }
++#endif
+         if (!acquired) {
+             vk_swap_dirty_async = true;
+         }
+@@ -1394,6 +1439,13 @@ static void vk_run_job(const VkJob &job) {
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+ 
+         // Row 0 of the window image is the bottom of the picture
++        static uint32_t loggedw, loggedh;
++        if (job.width != loggedw || job.height != loggedh) {
++            loggedw = job.width;
++            loggedh = job.height;
++            sysLogPrintf(LOG_NOTE, "Vulkan: presenting a %ux%u picture into the %ux%u swapchain", job.width, job.height,
++                         vk_swap_extent.width, vk_swap_extent.height);
++        }
+         VkImageBlit blit = {};
+         blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+         blit.srcOffsets[0] = { 0, (int32_t)job.height, 0 };
+@@ -1444,6 +1496,11 @@ static void vk_run_job(const VkJob &job) {
          pi.pSwapchains = &vk_swapchain;
          pi.pImageIndices = &index;
          const VkResult pr = vkQueuePresentKHR(vk_queue, &pi);
@@ -282,7 +398,41 @@ index 687f3fa7b..76124a179 100644
          if (pr == VK_ERROR_OUT_OF_DATE_KHR || pr == VK_SUBOPTIMAL_KHR || r == VK_SUBOPTIMAL_KHR) {
              vk_swap_dirty_async = true;
          }
-@@ -4054,7 +4072,7 @@ static void vk_grade_frame(void) {
+@@ -1847,6 +1904,24 @@ static void vk_cache_save(void) {
+     vk_cache_save_to(true);
+ }
+ 
++#if defined(__PROSPERO__)
++} // namespace
++// What a stutter on the console was spent on: shaders compiled and pipelines built since the
++// last call (gfx_pc.cpp's hitch line)
++extern "C" void gfx_vk_hitch_counts(unsigned *compiles, unsigned *pipelines, unsigned *ms) {
++    static uint32_t lastCompiles, lastPipelines;
++    static double lastMs;
++    const double total = vk_stat_compile_ms + vk_stat_pipeline_ms;
++    *compiles = vk_stat_compiles - lastCompiles;
++    *pipelines = vk_stat_pipelines - lastPipelines;
++    *ms = (unsigned)(total - lastMs);
++    lastCompiles = vk_stat_compiles;
++    lastPipelines = vk_stat_pipelines;
++    lastMs = total;
++}
++namespace {
++#endif
++
+ static void vk_drain(void);
+ 
+ static void vk_cache_save_at_exit(void) {
+@@ -3538,6 +3613,8 @@ static bool vk_create_swapchain(void) {
+     ci.imageFormat = vk_swap_format;
+     ci.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+     ci.imageExtent = extent;
++    sysLogPrintf(LOG_NOTE, "Vulkan: swapchain %ux%u (surface current %ux%u, window %dx%d)", extent.width, extent.height,
++                 caps.currentExtent.width, caps.currentExtent.height, w, h);
+     ci.imageArrayLayers = 1;
+     ci.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+     ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+@@ -4054,7 +4131,7 @@ static void vk_grade_frame(void) {
   */
  static VkPipeline vk_post_pipelines[GFX_POST_NUM_PASSES];
  static bool vk_post_pipeline_failed[GFX_POST_NUM_PASSES];
@@ -291,7 +441,7 @@ index 687f3fa7b..76124a179 100644
  static uint32_t vk_post_area_tex, vk_post_search_tex;
  static bool vk_post_failed;
  
-@@ -4180,6 +4198,10 @@ static bool gfx_vk_post_process(int fb_src, bool smaa, bool fsr, float sharpness
+@@ -4180,6 +4257,10 @@ static bool gfx_vk_post_process(int fb_src, bool smaa, bool fsr, float sharpness
      const uint32_t sw = in->width, sh = in->height;
      const bool scaled = sw != win.width || sh != win.height;
      bool ok = true;
@@ -302,7 +452,7 @@ index 687f3fa7b..76124a179 100644
  
      if (smaa) {
          if (!vk_post_area_tex) {
-@@ -4191,7 +4213,7 @@ static bool gfx_vk_post_process(int fb_src, bool smaa, bool fsr, float sharpness
+@@ -4191,7 +4272,7 @@ static bool gfx_vk_post_process(int fb_src, bool smaa, bool fsr, float sharpness
          ok = ok && vk_post_draw(GFX_POST_SMAA_EDGES, vk_post_edges, in, NULL, NULL, 0, 0, 0.f, 0.f, true);
          ok = ok && vk_post_draw(GFX_POST_SMAA_WEIGHTS, vk_post_weights, &vk_post_edges, NULL, NULL,
                                  vk_post_slot(vk_post_area_tex), vk_post_slot(vk_post_search_tex), 0.f, 0.f, false);
@@ -311,7 +461,7 @@ index 687f3fa7b..76124a179 100644
                                  0.f, 0.f, false);
          in = &vk_post_smaa_out;
      }
-@@ -4200,12 +4222,21 @@ static bool gfx_vk_post_process(int fb_src, bool smaa, bool fsr, float sharpness
+@@ -4200,12 +4281,21 @@ static bool gfx_vk_post_process(int fb_src, bool smaa, bool fsr, float sharpness
          if (fsr && vk_post_target(vk_post_easu, win.width, win.height) &&
              vk_post_draw(GFX_POST_EASU, vk_post_easu, in, NULL, NULL, 0, 0, (float)win.width, (float)win.height,
                           false)) {
@@ -336,7 +486,7 @@ index 687f3fa7b..76124a179 100644
      }
  
      vk_bound_pipeline = VK_NULL_HANDLE;
-@@ -4578,8 +4609,12 @@ static PFN_vkGetInstanceProcAddr vk_load_loader_headless(void) {
+@@ -4578,8 +4668,12 @@ static PFN_vkGetInstanceProcAddr vk_load_loader_headless(void) {
  static bool vk_init_instance(SDL_Window *wnd, bool debug) {
      const bool headless = gfx_sdl_vulkan_headless() != 0;
  
@@ -349,7 +499,7 @@ index 687f3fa7b..76124a179 100644
      if (!vk_get_instance_proc) {
          vk_fail("no Vulkan loader: %s", SDL_GetError());
          return false;
-@@ -4595,12 +4630,22 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
+@@ -4595,12 +4689,22 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
      if (vk_enumerate_instance_version) {
          vk_enumerate_instance_version(&loader_version);
      }
@@ -372,7 +522,7 @@ index 687f3fa7b..76124a179 100644
      if (headless) {
          uint32_t count = 0;
          vkEnumerateInstanceExtensionProperties(NULL, &count, NULL);
-@@ -4623,6 +4668,7 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
+@@ -4623,6 +4727,7 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
          exts.resize(n);
          SDL_Vulkan_GetInstanceExtensions(wnd, &n, exts.data());
      }
@@ -380,7 +530,7 @@ index 687f3fa7b..76124a179 100644
  
      std::vector<const char *> layers;
      if (debug) {
-@@ -4688,6 +4734,64 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
+@@ -4688,6 +4793,64 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
          }
      }
  
@@ -445,7 +595,7 @@ index 687f3fa7b..76124a179 100644
      if (headless) {
          // The swapchain takes the window's size (currentExtent is undefined
          // on a headless surface) and is read back like any other
-@@ -4707,6 +4811,7 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
+@@ -4707,6 +4870,7 @@ static bool vk_init_instance(SDL_Window *wnd, bool debug) {
          vk_surface = VK_NULL_HANDLE;
          return false;
      }
@@ -454,10 +604,26 @@ index 687f3fa7b..76124a179 100644
      return true;
  }
 diff --git a/port/include/external/enet.h b/port/include/external/enet.h
-index 0aebf703a..3e08a6dbd 100644
+index 0aebf703a..792591857 100644
 --- a/port/include/external/enet.h
 +++ b/port/include/external/enet.h
-@@ -727,6 +727,9 @@ extern "C" {
+@@ -128,6 +128,15 @@
+ 	#ifndef MSG_NOSIGNAL
+ 		#define MSG_NOSIGNAL 0
+ 	#endif
++	// Each receive and send must not wait, whatever the socket's own mode: on the PS5 the
++	// game hung inside a receive backing out of the lobby (2026-10-18)
++	#if defined(MSG_DONTWAIT)
++		#define ENET_MSG_DONTWAIT MSG_DONTWAIT
++	#elif defined(PLATFORM_PS5)
++		#define ENET_MSG_DONTWAIT 0x80 // FreeBSD's
++	#else
++		#define ENET_MSG_DONTWAIT 0
++	#endif
+ 
+ 	#ifdef MSG_MAXIOVLEN
+ 		#define ENET_BUFFER_MAXIMUM MSG_MAXIOVLEN
+@@ -727,6 +736,9 @@ extern "C" {
  	ENET_API int enet_address_get_hostname(const ENetAddress*, char*, size_t);
  
  	ENET_API ENetSocket enet_socket_create(ENetSocketType);
@@ -467,7 +633,7 @@ index 0aebf703a..3e08a6dbd 100644
  	ENET_API int enet_socket_bind(ENetSocket, const ENetAddress*);
  	ENET_API int enet_socket_get_address(ENetSocket, ENetAddress*);
  	ENET_API int enet_socket_listen(ENetSocket, int);
-@@ -4343,6 +4346,10 @@ extern "C" {
+@@ -4343,6 +4355,10 @@ extern "C" {
  		memset(&hints, 0, sizeof(hints));
  
  		hints.ai_family = AF_UNSPEC;
@@ -478,7 +644,7 @@ index 0aebf703a..3e08a6dbd 100644
  
  		if (getaddrinfo(name, NULL, &hints, &resultList) != 0)
  			return -1;
-@@ -4437,22 +4444,99 @@ extern "C" {
+@@ -4437,22 +4453,99 @@ extern "C" {
  			return (timeVal.tv_sec * 1000) ^ (timeVal.tv_usec / 1000);
  		}
  
@@ -588,7 +754,7 @@ index 0aebf703a..3e08a6dbd 100644
  		}
  
  		int enet_socket_get_address(ENetSocket socket, ENetAddress* address) {
-@@ -4491,7 +4575,7 @@ extern "C" {
+@@ -4491,7 +4584,7 @@ extern "C" {
  				socketType |= SOCK_CLOEXEC;
  			#endif
  
@@ -597,7 +763,7 @@ index 0aebf703a..3e08a6dbd 100644
  		}
  
  		int enet_socket_set_option(ENetSocket socket, ENetSocketOption option, int value) {
-@@ -4549,7 +4633,7 @@ extern "C" {
+@@ -4549,7 +4642,7 @@ extern "C" {
  					break;
  
  				case ENET_SOCKOPT_IPV6_V6ONLY:
@@ -606,7 +772,7 @@ index 0aebf703a..3e08a6dbd 100644
  
  					break;
  
-@@ -4580,15 +4664,15 @@ extern "C" {
+@@ -4580,15 +4673,15 @@ extern "C" {
  
  		int enet_socket_connect(ENetSocket socket, const ENetAddress* address) {
  			int result = -1;
@@ -629,7 +795,7 @@ index 0aebf703a..3e08a6dbd 100644
  
  			if (result == -1 && errno == EINPROGRESS)
  				return 0;
-@@ -4598,18 +4682,16 @@ extern "C" {
+@@ -4598,18 +4691,16 @@ extern "C" {
  
  		ENetSocket enet_socket_accept(ENetSocket socket, ENetAddress* address) {
  			int result = -1;
@@ -653,7 +819,7 @@ index 0aebf703a..3e08a6dbd 100644
  
  			return result;
  		}
-@@ -4625,19 +4707,18 @@ extern "C" {
+@@ -4625,24 +4716,23 @@ extern "C" {
  
  		int enet_socket_send(ENetSocket socket, const ENetAddress* address, const ENetBuffer* buffers, size_t bufferCount) {
  			struct msghdr msgHdr;
@@ -679,7 +845,13 @@ index 0aebf703a..3e08a6dbd 100644
  			}
  
  			msgHdr.msg_iov = (struct iovec*)buffers;
-@@ -4656,14 +4737,15 @@ extern "C" {
+ 			msgHdr.msg_iovlen = bufferCount;
+-			sentLength = sendmsg(socket, &msgHdr, MSG_NOSIGNAL);
++			sentLength = sendmsg(socket, &msgHdr, MSG_NOSIGNAL | ENET_MSG_DONTWAIT);
+ 
+ 			if (sentLength == -1) {
+ 				if (errno == EWOULDBLOCK)
+@@ -4656,19 +4746,20 @@ extern "C" {
  
  		int enet_socket_receive(ENetSocket socket, ENetAddress* address, ENetBuffer* buffers, size_t bufferCount) {
  			struct msghdr msgHdr;
@@ -698,7 +870,13 @@ index 0aebf703a..3e08a6dbd 100644
  			}
  
  			msgHdr.msg_iov = (struct iovec*)buffers;
-@@ -4680,10 +4762,8 @@ extern "C" {
+ 			msgHdr.msg_iovlen = bufferCount;
+-			recvLength = recvmsg(socket, &msgHdr, MSG_NOSIGNAL);
++			recvLength = recvmsg(socket, &msgHdr, MSG_NOSIGNAL | ENET_MSG_DONTWAIT);
+ 
+ 			if (recvLength == -1) {
+ 				if (errno == EWOULDBLOCK)
+@@ -4680,10 +4771,8 @@ extern "C" {
  			if (msgHdr.msg_flags & MSG_TRUNC)
  				return -2;
  
@@ -1148,7 +1326,7 @@ index ecfb59a65..53a2a6281 100644
  	curl_easy_setopt(curl, CURLOPT_WRITEDATA, buf);
  	curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)(req->timeout > 0 ? req->timeout : GHOSTNET_TIMEOUT));
 diff --git a/port/src/input.c b/port/src/input.c
-index a5e75de49..7c9ec6670 100644
+index a5e75de49..7a46f8682 100644
 --- a/port/src/input.c
 +++ b/port/src/input.c
 @@ -13,6 +13,14 @@
@@ -1166,7 +1344,7 @@ index a5e75de49..7c9ec6670 100644
  
  #if !SDL_VERSION_ATLEAST(2, 0, 14)
  // this was added in 2.0.14
-@@ -124,6 +132,119 @@ static s32 textQueueLen = 0;
+@@ -124,6 +132,152 @@ static s32 textQueueLen = 0;
  
  static char *clipboardText = NULL;
  
@@ -1204,12 +1382,45 @@ index a5e75de49..7c9ec6670 100644
 +	s8 reserved[12];
 +} Ps5ImeDialogResult;
 +
-+int sceImeDialogInit(const Ps5ImeDialogParam *param, void *extended);
-+int sceImeDialogGetStatus(void);      // 0 none, 1 running, 2 finished
-+int sceImeDialogGetResult(Ps5ImeDialogResult *result);
-+int sceImeDialogAbort(void);
-+int sceImeDialogTerm(void);
++// Loaded at run time (ps5_platform.c): the title's own imports of these come back unresolved.
++// Without them the game's own on-screen keyboard is the only one.
++int ps5LoadSystemModule(const char *name);
++void *ps5SystemSym(int handle, const char *name);
++static int (*sceImeDialogInit)(const Ps5ImeDialogParam *param, void *extended);
++static int (*sceImeDialogGetStatus)(void);      // 0 none, 1 running, 2 finished
++static int (*sceImeDialogGetResult)(Ps5ImeDialogResult *result);
++static int (*sceImeDialogAbort)(void);
++static int (*sceImeDialogTerm)(void);
 +int sceUserServiceGetForegroundUser(int *user_id);
++
++static s32 inputPs5ImeLoad(void)
++{
++	static s32 tried, ok;
++
++	if (!tried) {
++		tried = 1;
++		// the IME dialog sits on the common dialog, which is loaded through libSceSysmodule
++		int (*loadInternal)(u32) = (int (*)(u32))ps5SystemSym(ps5LoadSystemModule("libSceSysmodule.sprx"), "sceSysmoduleLoadModuleInternal");
++		if (loadInternal) {
++			sysLogPrintf(LOG_NOTE, "input: common dialog module: 0x%08x", (u32)loadInternal(0x80000018));
++		}
++		const int common = ps5LoadSystemModule("libSceCommonDialog.sprx");
++		int (*commonInit)(void) = (int (*)(void))ps5SystemSym(common, "sceCommonDialogInitialize");
++		if (commonInit) {
++			sysLogPrintf(LOG_NOTE, "input: common dialog: 0x%08x", (u32)commonInit());
++		}
++		const int m = ps5LoadSystemModule("libSceImeDialog.sprx");
++		sceImeDialogInit = (int (*)(const Ps5ImeDialogParam *, void *))ps5SystemSym(m, "sceImeDialogInit");
++		sceImeDialogGetStatus = (int (*)(void))ps5SystemSym(m, "sceImeDialogGetStatus");
++		sceImeDialogGetResult = (int (*)(Ps5ImeDialogResult *))ps5SystemSym(m, "sceImeDialogGetResult");
++		sceImeDialogAbort = (int (*)(void))ps5SystemSym(m, "sceImeDialogAbort");
++		sceImeDialogTerm = (int (*)(void))ps5SystemSym(m, "sceImeDialogTerm");
++		ok = sceImeDialogInit && sceImeDialogGetStatus && sceImeDialogGetResult && sceImeDialogAbort && sceImeDialogTerm;
++		sysLogPrintf(LOG_NOTE, "input: the PS5 keyboard dialog is %s", ok ? "ready" : "not there; the game's own keyboard is used");
++	}
++
++	return ok;
++}
 +
 +static s32 imeRunning = 0;
 +static s32 imeEnterPending = 0;
@@ -1225,7 +1436,7 @@ index a5e75de49..7c9ec6670 100644
 +		return 1;
 +	}
 +
-+	if (sceUserServiceGetForegroundUser(&user) != 0) {
++	if (!inputPs5ImeLoad() || sceUserServiceGetForegroundUser(&user) != 0) {
 +		return 0;
 +	}
 +
@@ -1286,7 +1497,7 @@ index a5e75de49..7c9ec6670 100644
  static const char *ckNames[CK_TOTAL_COUNT] = {
  	"R_CBUTTONS",
  	"L_CBUTTONS",
-@@ -1368,12 +1489,479 @@ static inline void inputUpdateMouse(void)
+@@ -1368,12 +1522,489 @@ static inline void inputUpdateMouse(void)
  	}
  }
  
@@ -1596,8 +1807,10 @@ index a5e75de49..7c9ec6670 100644
 + * both are read here and handed to SDL as if its own driver had seen them:
 + * SDL_GetKeyboardState, SDL_GetRelativeMouseState and the key and button
 + * events then carry them to the game's bindings and mouselook unchanged.
-+ * libSceKeyboard is already imported (SDL links it). libSceMouse is not in the
-+ * SDK, so it is loaded at run time and the mouse is skipped if it is not there.
++ * Both libraries are loaded at run time and looked up by name, and either is
++ * skipped if it is not there: libSceKeyboard is among SDL's imports, but the
++ * console left them unresolved, and the first call through one was a call to
++ * address 0 (2026-10-18). libSceMouse is not in the SDK at all.
 + * The layouts are PacBrew SDL's keyboard_state_t and the PS4 SDK's SceMouseData.
 + */
 +typedef struct {
@@ -1617,12 +1830,7 @@ index a5e75de49..7c9ec6670 100644
 +	u8 reserve[8];
 +} Ps5MouseData;
 +
-+int sceKeyboardInit(void);
-+int sceKeyboardOpen(int user, int type, int index, void *param);
-+int sceKeyboardReadState(int handle, Ps5KeyboardState *state);
 +int sceUserServiceGetForegroundUser(int *user);
-+int sceKernelLoadStartModule(const char *path, size_t args, const void *argp, u32 flags, const void *opt, int *res);
-+int sceKernelDlsym(int module, const char *name, void **addr);
 +int SDL_SendKeyboardKey(Uint8 state, SDL_Scancode scancode);
 +void SDL_SetKeyboardFocus(SDL_Window *window);
 +void SDL_SetMouseFocus(SDL_Window *window);
@@ -1630,6 +1838,9 @@ index a5e75de49..7c9ec6670 100644
 +int SDL_SendMouseButton(SDL_Window *window, Uint32 mouseID, Uint8 state, Uint8 button);
 +int SDL_SendMouseWheel(SDL_Window *window, Uint32 mouseID, float x, float y, SDL_MouseWheelDirection direction);
 +
++static int (*ps5KeyboardInit)(void);
++static int (*ps5KeyboardOpen)(int user, int type, int index, void *param);
++static int (*ps5KeyboardReadState)(int handle, Ps5KeyboardState *state);
 +static int (*ps5MouseInit)(void);
 +static int (*ps5MouseOpen)(int user, int type, int index, void *param);
 +static int (*ps5MouseRead)(int handle, Ps5MouseData *data, int num);
@@ -1650,27 +1861,37 @@ index a5e75de49..7c9ec6670 100644
 +		started = 1;
 +		SDL_SetKeyboardFocus(wnd);
 +		SDL_SetMouseFocus(wnd);
-+		sceKeyboardInit(); // SDL's driver may have already: an error then is fine
 +
-+		static const char *const paths[] = { "/system/common/lib/libSceMouse.sprx", "/system/priv/lib/libSceMouse.sprx" };
-+		for (s32 i = 0; i < 2 && !ps5MouseRead; i++) {
-+			const int m = sceKernelLoadStartModule(paths[i], 0, NULL, 0, NULL, NULL);
-+			if (m >= 0 && sceKernelDlsym(m, "sceMouseInit", (void **)&ps5MouseInit) == 0
-+					&& sceKernelDlsym(m, "sceMouseOpen", (void **)&ps5MouseOpen) == 0
-+					&& sceKernelDlsym(m, "sceMouseRead", (void **)&ps5MouseRead) == 0) {
-+				ps5MouseInit();
-+			} else {
-+				ps5MouseRead = NULL;
-+			}
-+			sysLogPrintf(LOG_NOTE, "input: %s: 0x%08x%s", paths[i], (u32)m, ps5MouseRead ? ", mouse ready" : "");
++		const int km = ps5LoadSystemModule("libSceKeyboard.sprx");
++		ps5KeyboardInit = (int (*)(void))ps5SystemSym(km, "sceKeyboardInit");
++		ps5KeyboardOpen = (int (*)(int, int, int, void *))ps5SystemSym(km, "sceKeyboardOpen");
++		ps5KeyboardReadState = (int (*)(int, Ps5KeyboardState *))ps5SystemSym(km, "sceKeyboardReadState");
++		if (!ps5KeyboardInit || !ps5KeyboardOpen) {
++			ps5KeyboardReadState = NULL;
 +		}
++		if (ps5KeyboardReadState) {
++			ps5KeyboardInit(); // SDL's driver may have already: an error then is fine
++		}
++
++		const int mm = ps5LoadSystemModule("libSceMouse.sprx");
++		ps5MouseInit = (int (*)(void))ps5SystemSym(mm, "sceMouseInit");
++		ps5MouseOpen = (int (*)(int, int, int, void *))ps5SystemSym(mm, "sceMouseOpen");
++		ps5MouseRead = (int (*)(int, Ps5MouseData *, int))ps5SystemSym(mm, "sceMouseRead");
++		if (!ps5MouseInit || !ps5MouseOpen) {
++			ps5MouseRead = NULL;
++		}
++		if (ps5MouseRead) {
++			ps5MouseInit();
++		}
++		sysLogPrintf(LOG_NOTE, "input: keyboard %s, mouse %s", ps5KeyboardReadState ? "ready" : "not there",
++				ps5MouseRead ? "ready" : "not there");
 +	}
 +
 +	// a keyboard or mouse plugged in later, or one the first try missed: once a second
-+	if ((kbd < 0 || (ps5MouseRead && mouse < 0)) && retry-- <= 0) {
++	if (((ps5KeyboardReadState && kbd < 0) || (ps5MouseRead && mouse < 0)) && retry-- <= 0) {
 +		retry = 60;
 +		if (sceUserServiceGetForegroundUser(&user) == 0) {
-+			if (kbd < 0 && (kbd = sceKeyboardOpen(user, 0, 0, NULL)) >= 0) {
++			if (ps5KeyboardReadState && kbd < 0 && (kbd = ps5KeyboardOpen(user, 0, 0, NULL)) >= 0) {
 +				sysLogPrintf(LOG_NOTE, "input: keyboard open (%d)", kbd);
 +			}
 +			if (ps5MouseRead && mouse < 0 && (mouse = ps5MouseOpen(user, 0, 0, NULL)) >= 0) {
@@ -1684,7 +1905,7 @@ index a5e75de49..7c9ec6670 100644
 +
 +		memset(&cur, 0, sizeof(cur));
 +
-+		if (sceKeyboardReadState(kbd, &cur) == 0 && cur.available) {
++		if (ps5KeyboardReadState(kbd, &cur) == 0 && cur.available) {
 +			static const SDL_Scancode mods[8] = {
 +				SDL_SCANCODE_LCTRL, SDL_SCANCODE_LSHIFT, SDL_SCANCODE_LALT, SDL_SCANCODE_LGUI,
 +				SDL_SCANCODE_RCTRL, SDL_SCANCODE_RSHIFT, SDL_SCANCODE_RALT, SDL_SCANCODE_RGUI,
@@ -1766,7 +1987,7 @@ index a5e75de49..7c9ec6670 100644
  	if (mouseEnabled) {
  		inputUpdateMouse();
  	}
-@@ -1795,6 +2383,12 @@ void inputMouseGetScaledDelta(f32* dx, f32* dy)
+@@ -1795,6 +2426,12 @@ void inputMouseGetScaledDelta(f32* dx, f32* dy)
  		mdx = rawdx * (0.022f / 3.5f) * mouseSensX;
  		mdy = rawdy * (0.022f / 3.5f) * mouseSensY;
  	}
@@ -1779,7 +2000,7 @@ index a5e75de49..7c9ec6670 100644
  	if (dx) *dx = mdx;
  	if (dy) *dy = mdy;
  }
-@@ -1908,6 +2502,35 @@ const char *inputGetKeyName(s32 vk)
+@@ -1908,6 +2545,35 @@ const char *inputGetKeyName(s32 vk)
  	return vkNames[vk];
  }
  
@@ -1815,7 +2036,7 @@ index a5e75de49..7c9ec6670 100644
  s32 inputGetKeyByName(const char *name)
  {
  	s32 start = 0;
-@@ -1949,6 +2572,13 @@ void inputClearLastKey(void)
+@@ -1949,6 +2615,13 @@ void inputClearLastKey(void)
  
  s32 inputGetLastKey(void)
  {
@@ -1829,7 +2050,7 @@ index a5e75de49..7c9ec6670 100644
  	return lastKey;
  }
  
-@@ -1958,6 +2588,10 @@ void inputStartTextInput(void)
+@@ -1958,6 +2631,10 @@ void inputStartTextInput(void)
  	lastKey = 0;
  	textInput = 1;
  	SDL_StartTextInput();
@@ -1840,7 +2061,7 @@ index a5e75de49..7c9ec6670 100644
  }
  
  /**
-@@ -2069,6 +2703,14 @@ const char *inputGetClipboard(void)
+@@ -2069,6 +2746,14 @@ const char *inputGetClipboard(void)
  void inputStopTextInput(void)
  {
  	SDL_StopTextInput();
@@ -1855,7 +2076,7 @@ index a5e75de49..7c9ec6670 100644
  
  	if (textInput) {
  		const u8 *state = SDL_GetKeyboardState(NULL);
-@@ -2099,6 +2741,11 @@ u32 inputGetKeyModState(void)
+@@ -2099,6 +2784,11 @@ u32 inputGetKeyModState(void)
  PD_CONSTRUCTOR static void inputConfigInit(void)
  {
  	configRegisterInt("Input.MouseEnabled", &mouseEnabled, 0, 1);
@@ -3053,7 +3274,7 @@ index fffbe04b9..b03cfe6dd 100644
  #else
  	static uintptr_t pagesize;
 diff --git a/port/src/texpack.c b/port/src/texpack.c
-index 0d3cce18c..43cbeee0e 100644
+index 0d3cce18c..76ff84e3c 100644
 --- a/port/src/texpack.c
 +++ b/port/src/texpack.c
 @@ -496,7 +496,11 @@ static struct texpackkept *kept; // TEXPACK_KEPT_SLOTS entries, allocated on fir
@@ -3089,7 +3310,32 @@ index 0d3cce18c..43cbeee0e 100644
  	{
  		// Last, so the pack the player chose in the menu wins over any
  		// textures/ a mod happens to ship. One scan covers both layouts -
-@@ -3596,6 +3614,15 @@ static struct texpackjob jobs[TEXPACK_MAX_PENDING];
+@@ -3228,6 +3246,24 @@ static const char **texpackIndexForArt(const struct texpackslot *slot, s32 *outi
+  * upside down on screen, and its artists have always edited them that way. Such
+  * a file is already in the order wanted and must be left alone.
+  */
++#ifdef PLATFORM_PS5
++// what a stutter on the console was spent on (gfx_pc.cpp's hitch line)
++u32 g_TexpackHitchLoads;
++u64 g_TexpackHitchUs;
++static u8 *texpackLoadImageTimed(const char *path, s32 flip, s32 *outWidth, s32 *outHeight);
++
++static u8 *texpackLoadImage(const char *path, s32 flip, s32 *outWidth, s32 *outHeight)
++{
++	const u64 t0 = sysGetMicroseconds();
++	u8 *rgba = texpackLoadImageTimed(path, flip, outWidth, outHeight);
++	g_TexpackHitchLoads++;
++	g_TexpackHitchUs += sysGetMicroseconds() - t0;
++	return rgba;
++}
++
++#define texpackLoadImage texpackLoadImageTimed
++#endif
++
+ static u8 *texpackLoadImage(const char *path, s32 flip, s32 *outWidth, s32 *outHeight)
+ {
+ 	s32 width;
+@@ -3596,6 +3632,15 @@ static struct texpackjob jobs[TEXPACK_MAX_PENDING];
  static SDL_mutex *jobLock;
  static SDL_cond *jobWake;
  static SDL_Thread *jobThread;
@@ -3105,7 +3351,7 @@ index 0d3cce18c..43cbeee0e 100644
  static s32 jobThreadRun;
  static u32 jobSerial;
  static u32 jobReadyBytes;
-@@ -3674,7 +3701,7 @@ static void texpackEnqueue(s32 slot, s32 texturenum)
+@@ -3674,7 +3719,7 @@ static void texpackEnqueue(s32 slot, s32 texturenum)
  	jobs[slot].texturenum = texturenum;
  	jobs[slot].serial = ++jobSerial;
  	jobs[slot].reported = 0;
@@ -3114,7 +3360,7 @@ index 0d3cce18c..43cbeee0e 100644
  }
  
  static void texpackBacklogAdd(s32 texturenum)
-@@ -3869,6 +3896,10 @@ static void texpackAsyncStart(void)
+@@ -3869,6 +3914,10 @@ static void texpackAsyncStart(void)
  	jobThreadRun = 1;
  	jobThread = SDL_CreateThread(texpackDecodeWorker, "pd-texpack", NULL);
  
@@ -3125,7 +3371,7 @@ index 0d3cce18c..43cbeee0e 100644
  	if (!jobThread) {
  		// Not fatal: without the thread every request simply misses forever and
  		// the game draws its own textures, which is what no pack at all does.
-@@ -3928,6 +3959,13 @@ void texpackAsyncShutdown(void)
+@@ -3928,6 +3977,13 @@ void texpackAsyncShutdown(void)
  
  	SDL_WaitThread(jobThread, NULL);
  	jobThread = NULL;
@@ -3139,7 +3385,7 @@ index 0d3cce18c..43cbeee0e 100644
  }
  
  /**
-@@ -4170,7 +4208,7 @@ s32 texpackPollDecoded(s32 *out, s32 max)
+@@ -4170,7 +4226,7 @@ s32 texpackPollDecoded(s32 *out, s32 max)
  
  	// A worker held back by the ready budget waits for exactly this.
  	if (jobReadyBytes <= TEXPACK_READY_BUDGET) {

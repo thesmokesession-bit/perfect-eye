@@ -72,6 +72,14 @@ stub libSceAgcDriver vendor/ps5/sdk/stubs/agc_driver_canary_link_stub.c
 # shellcheck source=/dev/null
 source "$root/tools/radv-link.sh"
 radv_link_recipe "$root" "$sdk_root" "$archive" || exit 2
+# getaddrinfo is the title's own (ps5_platform.c, through the console's resolver): the SDK's
+# ps5_getaddrinfo only fails, and online play and the lobby could not resolve a hostname.
+for i in "${!radv_link_flags[@]}"; do
+    case ${radv_link_flags[$i]} in
+    --defsym=getaddrinfo=*) radv_link_flags[$i]=--defsym=getaddrinfo=pd_ps5_getaddrinfo ;;
+    --defsym=freeaddrinfo=*) radv_link_flags[$i]=--defsym=freeaddrinfo=pd_ps5_freeaddrinfo ;;
+    esac
+done
 "$sdk_root/bin/prospero-lld" "${radv_linker_script[@]}" --eh-frame-hdr "${radv_link_flags[@]}" "${path_wraps[@]}" \
     --version-script "$native/app-symbols.map" --exclude-libs=ALL \
     --version-script "$(dirname "${BASH_SOURCE[0]}")/title-local.map" \
