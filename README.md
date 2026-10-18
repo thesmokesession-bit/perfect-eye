@@ -63,6 +63,8 @@ Everything the game writes (settings in `pd.ini`, saves, the log) stays in that 
   with the PC version's key bindings (Extended Options → Mouse and the controls pages). The
   keyboard goes through the PS5's keyboard library. The mouse library is not in the SDK, so the
   game loads it when it starts; `pd.log` says whether it found it (`input: ... mouse ready`).
+- **Xbox 360 Look** on the PS5 Settings page: the 2010 Xbox Live Arcade release's models, textures,
+  rooms, font and explosions (F6 on a keyboard), once its package is in `added-content/`.
 - **The PS5's keyboard** opens for every text field: the online name and PIN, chat and the
   menus' keyboard.
 - **A GoldenEye tile:** `PPSA64008` is the same game installed as a second title that opens

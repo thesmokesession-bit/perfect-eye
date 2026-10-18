@@ -2663,7 +2663,7 @@ index c927e5ead..69ae77145 100644
  	} else {
  		snprintf(tail, sizeof(tail), " (1/%d)", s_Create.maxhumans);
 diff --git a/port/src/optionsmenu.c b/port/src/optionsmenu.c
-index 76cceaa09..c30bc93be 100644
+index 76cceaa09..9c3a6cb11 100644
 --- a/port/src/optionsmenu.c
 +++ b/port/src/optionsmenu.c
 @@ -2620,7 +2620,7 @@ static MenuItemHandlerResult menuhandlerBind(s32 operation, struct menuitem *ite
@@ -2693,7 +2693,7 @@ index 76cceaa09..c30bc93be 100644
  			keyname[sizeof(keyname) - 1] = '\0';
  			for (char *p = keyname; *p; ++p) {
  				if (*p == '_') *p = ' ';
-@@ -7928,7 +7928,202 @@ struct menudialogdef g_ExtendedAdvancedMenuDialog = {
+@@ -7928,7 +7928,225 @@ struct menudialogdef g_ExtendedAdvancedMenuDialog = {
  	NULL,
  };
  
@@ -2776,6 +2776,21 @@ index 76cceaa09..c30bc93be 100644
 +
 +extern s32 g_NetBotBackfill; // netlobby.c
 +
++// The Xbox 360 release's whole look (F6's switch): models, textures, rooms,
++// font, explosions, skies, reflections; needs the package in added-content/
++static MenuItemHandlerResult menuhandlerPs5Xbla(s32 operation, struct menuitem *item, union handlerdata *data)
++{
++	switch (operation) {
++	case MENUOP_GET:
++		return xblaSwitchGetEnabled();
++	case MENUOP_SET:
++		xblaSwitchSetEnabled(data->checkbox.value);
++		break;
++	}
++
++	return 0;
++}
++
 +static MenuItemHandlerResult menuhandlerPs5Backfill(s32 operation, struct menuitem *item, union handlerdata *data)
 +{
 +	switch (operation) {
@@ -2823,6 +2838,14 @@ index 76cceaa09..c30bc93be 100644
 +		(uintptr_t)"Retro Mode (4:3 CRT)",
 +		0,
 +		menuhandlerPs5Retro,
++	},
++	{
++		MENUITEMTYPE_CHECKBOX,
++		0,
++		MENUITEMFLAG_LITERAL_TEXT,
++		(uintptr_t)"Xbox 360 Look",
++		0,
++		menuhandlerPs5Xbla,
 +	},
 +	{
 +		MENUITEMTYPE_DROPDOWN,
