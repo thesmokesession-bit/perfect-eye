@@ -35,7 +35,7 @@ players use the Dab's Mod dev build of that commit.
 
 ## Installing
 
-1. Download `PerfectDark-PS5-<version>.zip` from the
+1. Download `PerfectEye-<version>.zip` from the
    [latest release](https://github.com/thesmokesession-bit/perfect-eye/releases/latest) and unzip it.
 2. Put your ROMs in the title folders:
    - `PPSA64007/` gets the Perfect Dark ROM, and optionally the GoldenEye ROM.
@@ -85,7 +85,7 @@ under **Options → Extended Options → Texture Packs**.
 - **Perfect Dark, the N64 look:** **PD Forever Plus HD** (Retro Foundry). The Texture Packs
   page's **Community Packs** button downloads it straight to the console. Its **Ultimate** and
   **XBLA** packs go on top of the Xbox 360 release, so they need that package too.
-- **GoldenEye:** download `GoldenEye-007-HD-PerfectEye.zip` from the release and unzip it into
+- **GoldenEye:** download `PerfectEye-GoldenEye-HD-Textures.zip` from the release and unzip it into
   `PPSA64008/texture-packs/`. It is [GoldenEye 007 HD](https://github.com/GhostlyDark/GoldenEye-007-HD)
   by intermissionfb (font textures by GhostlyDark), converted to this game's texture numbers and
   capped at 1024 pixels. It covers the levels and weapons (nearly every surface in the missions

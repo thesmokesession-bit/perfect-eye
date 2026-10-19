@@ -42,8 +42,9 @@ title folder. The first start puts them in place and converts GoldenEye, then op
 cp "$root/tools/ps5-push.command" "$root/tools/ps5-sync-saves.command" "$root/dist/"
 
 if $release; then
-    version=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["contentVersion"])' "$root/sce_sys/param.json")
-    zip="$root/dist/PerfectDark-PS5-$version.zip"
+    # contentVersion 00.001.000 -> 1.0.0
+    version=$(python3 -c 'import json, sys; print(".".join(str(int(p)) for p in json.load(open(sys.argv[1]))["contentVersion"].split(".")))' "$root/sce_sys/param.json")
+    zip="$root/dist/PerfectEye-$version.zip"
     rm -f "$zip"
     (cd "$root/dist" && zip -qr -9 "$zip" PPSA64007 PPSA64008 ps5-push.command ps5-sync-saves.command)
     (cd "$root/dist" && sha256sum "$(basename "$zip")" > "$(basename "$zip").sha256")

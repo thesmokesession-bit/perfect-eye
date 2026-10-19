@@ -107,7 +107,7 @@ jobs:
             echo "build x86_64-ps5 eboot.bin $sha $size"
           } > update.txt
           curl -sfL "$DABS_DEV/patchnotes.txt" -o patchnotes.txt || : > patchnotes.txt
-          mv dist/PerfectDark-PS5-*.zip "PerfectEye-PS5-$short.zip"
+          mv dist/PerfectEye-*.zip "PerfectEye-dev-$short.zip"
           xz -T0 -9 -c build-ps5/pd/pd.x86_64.elf > "eboot.bin.elf-$short.xz"
           cat update.txt
 
@@ -121,8 +121,8 @@ jobs:
           gh release view ps5-dev >/dev/null 2>&1 ||
             gh release create ps5-dev --prerelease --title "Perfect Eye PS5 (follows Dab's Mod dev)" --notes "$notes"
           gh release edit ps5-dev --notes "$notes"
-          old=$(gh release view ps5-dev --json assets -q '.assets[].name' | grep -E '^(PerfectEye-PS5-|eboot.bin.elf-)' || true)
-          gh release upload ps5-dev --clobber eboot.bin update.txt patchnotes.txt "PerfectEye-PS5-$short.zip" "eboot.bin.elf-$short.xz"
+          old=$(gh release view ps5-dev --json assets -q '.assets[].name' | grep -E '^(PerfectEye-|eboot.bin.elf-)' || true)
+          gh release upload ps5-dev --clobber eboot.bin update.txt patchnotes.txt "PerfectEye-dev-$short.zip" "eboot.bin.elf-$short.xz"
           for a in $old; do
             case $a in *"$short"*) ;; *) gh release delete-asset ps5-dev "$a" -y ;; esac
           done
