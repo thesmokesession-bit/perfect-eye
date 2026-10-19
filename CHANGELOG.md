@@ -8,6 +8,10 @@
   Version** and **Don't Show Update Notices** are there too.
 - Check for Updates' **Restart Now** starts the new build straight away on the PS5, instead of
   quitting to the home screen.
+- **Download and Install no longer freezes the game.** The check before it left a network
+  connection to close as its thread ended, and on the PS5 that thread never finished, so the
+  install waited on it forever. Only the online lobby keeps connections open now, and the updater
+  no longer waits on a finished check.
 
 ## 1.1.0 (2026-10-19)
 

@@ -1065,6 +1065,24 @@ index 827edc653..8c146fa4b 100644
  // the stick GoldenEye's screens read: the further pushed of a pad's two
  s32 gexMenuStickX(s32 player);
  s32 gexMenuStickY(s32 player);
+diff --git a/port/include/ghostnet.h b/port/include/ghostnet.h
+index 40ca395cb..525cde808 100644
+--- a/port/include/ghostnet.h
++++ b/port/include/ghostnet.h
+@@ -100,6 +100,13 @@ struct ghostnetreq {
+ 	const char *url;
+ 	const void *body;   // NULL for a GET
+ 	u32 bodylen;
++	// Keep this thread's connection open for its next request (curl only): for a
++	// thread that lives as long as the lobby and is never waited on. Off, the
++	// handle is cleaned up before the request returns. A kept one is cleaned up
++	// as its thread ends, and on the PS5 that end never came: the updater's
++	// worker hung there and the next Check for Updates waited on it for good
++	// (2026-10-19).
++	s32 keep;
+ 	const char *type;   // Content-Type, when there is a body
+ 	s32 auth;           // send X-Ghost-User and X-Ghost-Pin
+ 	// Follow a redirect rather than treating one as the reply. Off for the
 diff --git a/port/include/input.h b/port/include/input.h
 index a15376e4c..d6a01642a 100644
 --- a/port/include/input.h
@@ -2093,7 +2111,7 @@ index 1907f81fe..ebb17da0d 100644
  	snprintf(g_NoticeTitle, sizeof(g_NoticeTitle), "CONVERTING %s", name);
  	for (char *c = g_NoticeTitle; *c; ++c) {
 diff --git a/port/src/ghostnet.c b/port/src/ghostnet.c
-index ecfb59a65..674042c82 100644
+index ecfb59a65..01247b0e7 100644
 --- a/port/src/ghostnet.c
 +++ b/port/src/ghostnet.c
 @@ -769,6 +769,73 @@ static size_t ghostnetCurlWrite(void *ptr, size_t size, size_t nmemb, void *arg)
@@ -2214,7 +2232,7 @@ index ecfb59a65..674042c82 100644
  		s32 *status, char *err, u32 errsize)
  {
 -	CURL *curl = curl_easy_init();
-+	CURL *curl = ghostnetCurl();
++	CURL *curl = req->keep ? ghostnetCurl() : curl_easy_init();
  	struct curl_slist *headers = NULL;
  	char header[128];
  	CURLcode res;
@@ -2256,7 +2274,7 @@ index ecfb59a65..674042c82 100644
 +				(int)(total * 1000));
 +	}
 +#endif
-+	if (!g_CurlTls) {
++	if (!req->keep || !g_CurlTls) {
 +		curl_easy_cleanup(curl);
 +	}
  
@@ -3643,7 +3661,7 @@ index f51c1b09d..682086544 100644
  
  		snprintf(extra, sizeof(extra), "victim %s%d attacker %s%d hitpart %d flags %d%s%s",
 diff --git a/port/src/net/netlobby.c b/port/src/net/netlobby.c
-index 22cda3709..b680c6d78 100644
+index 22cda3709..54f4f17b2 100644
 --- a/port/src/net/netlobby.c
 +++ b/port/src/net/netlobby.c
 @@ -266,9 +266,12 @@ extern struct menudialogdef g_MpEndscreenSavePlayerMenuDialog;
@@ -3659,7 +3677,15 @@ index 22cda3709..b680c6d78 100644
  }
  
  static u64 lobbyNowMs(void)
-@@ -988,7 +991,22 @@ static void lobbyGone(u32 epoch, const char *why)
+@@ -848,6 +851,7 @@ static s32 lobbyRequest(const char *path, const char *body, s32 auth, s32 timeou
+ 	req.timeout = timeout;
+ 	req.cancel = &s_Quit;
+ 	req.headers = headers[0] ? headers : NULL;
++	req.keep = 1; // the lobby's threads are never waited on (netLobbyShutdown detaches them)
+ 
+ 	*reply = NULL;
+ 	*objok = 0;
+@@ -988,7 +992,22 @@ static void lobbyGone(u32 epoch, const char *why)
  
  static void lobbyPlayersFetch(void);
  
@@ -3682,7 +3708,7 @@ index 22cda3709..b680c6d78 100644
  {
  	char err[128];
  	char msg[200];
-@@ -3014,6 +3032,58 @@ static s32 lobbySplitEndpoint(const char *ep, char *addr, s32 size, u16 *port)
+@@ -3014,6 +3033,58 @@ static s32 lobbySplitEndpoint(const char *ep, char *addr, s32 size, u16 *port)
  	return *port ? 0 : -1;
  }
  
@@ -3741,7 +3767,7 @@ index 22cda3709..b680c6d78 100644
  static void lobbyHostTick(void)
  {
  	s32 i;
-@@ -3109,6 +3179,7 @@ static void lobbyHostTick(void)
+@@ -3109,6 +3180,7 @@ static void lobbyHostTick(void)
  			}
  
  			sysLogPrintf(LOG_NOTE, "lobby: all %d launched player%s connected; starting the match", connected, connected == 1 ? "" : "s");
@@ -4635,7 +4661,7 @@ index 0d3cce18c..e4a212db1 100644
  {
  	s32 n;
 diff --git a/port/src/update.c b/port/src/update.c
-index b32b6b917..9b3b659dd 100644
+index b32b6b917..7d3fa9ba9 100644
 --- a/port/src/update.c
 +++ b/port/src/update.c
 @@ -59,9 +59,22 @@
@@ -4698,7 +4724,29 @@ index b32b6b917..9b3b659dd 100644
  	// The package the release job builds carries the executable bit; a file
  	// this wrote itself does not, and a copy of the game nothing can start is
  	// the same as no copy at all.
-@@ -1203,7 +1228,9 @@ void updateInstall(void)
+@@ -917,6 +942,9 @@ static int updateWorker(void *arg)
+ 	g_Job = UPDATE_JOB_NONE;
+ 	g_Quiet = false;
+ 	SDL_UnlockMutex(g_Lock);
++#ifdef PLATFORM_PS5
++	ps5Trace(0, "update: worker done (job %d)", job);
++#endif
+ 
+ 	return 0;
+ }
+@@ -928,7 +956,10 @@ static void updateStart(s32 job)
+ 	}
+ 
+ 	if (g_Thread) {
+-		SDL_WaitThread(g_Thread, NULL);
++		// The last job is over (the state is not busy), so there is nothing to wait
++		// for: the thread is let go rather than joined. Joining waited for good on the
++		// PS5 when the thread's end never came (2026-10-19).
++		SDL_DetachThread(g_Thread);
+ 		g_Thread = NULL;
+ 	}
+ 
+@@ -1203,7 +1234,9 @@ void updateInstall(void)
  
  bool updateIsAvailable(void)
  {
@@ -4709,7 +4757,7 @@ index b32b6b917..9b3b659dd 100644
  	return true;
  #else
  	return false;
-@@ -1428,6 +1455,17 @@ static void updateExec(const char *path)
+@@ -1428,6 +1461,17 @@ static void updateExec(const char *path)
  
  		_spawnv(_P_NOWAIT, path, quoted ? quoted : argv);
  	}
@@ -4727,6 +4775,18 @@ index b32b6b917..9b3b659dd 100644
  #else
  	execv(path, (char *const *)sysGetArgv());
  	// Only reached if the new build could not be started at all, which leaves
+@@ -1497,9 +1541,10 @@ void updateShutdown(void)
+ 		bool quiet;
+ 
+ 		SDL_LockMutex(g_Lock);
+-		quiet = g_Quiet && g_Job != UPDATE_JOB_NONE;
++		quiet = (g_Quiet && g_Job != UPDATE_JOB_NONE) || g_Job == UPDATE_JOB_NONE;
+ 		SDL_UnlockMutex(g_Lock);
+ 
++		// (or no job at all: the worker is done, whatever its thread is still doing)
+ 		if (quiet) {
+ 			// The startup check is still asking. It has nothing to write and
+ 			// nothing to leave behind, and a request stuck connecting to a
 diff --git a/port/src/updatemenu.c b/port/src/updatemenu.c
 index 06123262a..e878a5541 100644
 --- a/port/src/updatemenu.c
