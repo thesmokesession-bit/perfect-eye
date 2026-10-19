@@ -163,10 +163,10 @@ index 3d9344d6e..13e3f5ada 100644
  // What ended a batch and forced a draw call. See g_GfxFlushReasons.
  enum GfxFlushReason {
 diff --git a/port/fast3d/gfx_pc.cpp b/port/fast3d/gfx_pc.cpp
-index 0631a10b3..d45a765d2 100644
+index 0631a10b3..544112419 100644
 --- a/port/fast3d/gfx_pc.cpp
 +++ b/port/fast3d/gfx_pc.cpp
-@@ -26,6 +26,14 @@
+@@ -26,6 +26,22 @@
  #include <PR/gbi.h>
  
  #include "platform.h"
@@ -176,12 +176,20 @@ index 0631a10b3..d45a765d2 100644
 +extern "C" void ps5Trace(int frames, const char *fmt, ...);
 +extern "C" void gfx_vk_hitch_counts(unsigned *compiles, unsigned *pipelines, unsigned *ms);
 +extern "C" u32 g_TexpackHitchLoads;
++#ifdef PLATFORM_PS5
++// where a slow frame went (the hitch line at the frame's start): textures made, the list
++// interpreted, presenting, and the Xbox 360 font's glyphs built (xblafont.c)
++extern "C" u32 g_XblaFontBuilds;
++extern "C" u64 g_XblaFontBuildUs;
++static u32 hitchImports;
++static u64 hitchImportUs, hitchRunUs, hitchSwapUs, hitchEndUs;
++#endif
 +extern "C" u64 g_TexpackHitchUs;
 +#endif
  
  #include "gfx_pc.h"
  #include "gfx_cc.h"
-@@ -406,6 +414,7 @@ float gfx_color_saturation = 1.0f;
+@@ -406,6 +422,7 @@ float gfx_color_saturation = 1.0f;
  float gfx_color_contrast = 1.0f;
  float gfx_color_black_level = 0.0f;
  bool gfx_post_smaa = false;
@@ -189,7 +197,22 @@ index 0631a10b3..d45a765d2 100644
  float gfx_render_scale = 1.0f;
  #define GFX_MAX_RENDER_SIDE 8192u
  float gfx_fsr_sharpness = 0.2f;
-@@ -8694,8 +8703,50 @@ extern "C" void gfx_start_frame(void) {
+@@ -2835,7 +2852,14 @@ static void gfx_derive_batch_state(void) {
+         if (comb->used_textures[i]) {
+             if (rdp.textures_changed[i]) {
+                 gfx_flush_for(GFX_FLUSH_TEXTURE);
++#ifdef PLATFORM_PS5
++                const uint64_t importStart = sysGetMicroseconds();
++                import_texture(i, tile, false);
++                hitchImportUs += sysGetMicroseconds() - importStart;
++                hitchImports++;
++#else
+                 import_texture(i, tile, false);
++#endif
+                 rdp.textures_changed[i] = false;
+             }
+ 
+@@ -8694,8 +8718,60 @@ extern "C" void gfx_start_frame(void) {
  
      gfx_current_window_dimensions.aspect_ratio = (float)gfx_current_window_dimensions.width / gfx_current_window_dimensions.height;
  
@@ -219,12 +242,22 @@ index 0631a10b3..d45a765d2 100644
 +        static u32 texLoads;
 +        static u64 texUs;
 +        gfx_vk_hitch_counts(&compiles, &pipelines, &buildMs);
++        static u32 glyphs;
++        static u64 glyphUs;
 +        if (last && now - last > 50000 && hitches < 300) {
 +            hitches++;
-+            sysLogPrintf(LOG_NOTE, "gfx: frame %u came %u ms after the last: %u shaders, %u pipelines (%u ms), %u HD textures (%u ms)",
++            sysLogPrintf(LOG_NOTE, "gfx: frame %u came %u ms after the last: %u shaders, %u pipelines (%u ms), %u HD textures (%u ms); "
++                         "lists %u ms, present %u+%u ms, %u textures made (%u ms), %u glyphs built (%u ms)",
 +                         frames, (unsigned)((now - last) / 1000), compiles, pipelines, buildMs,
-+                         (unsigned)(g_TexpackHitchLoads - texLoads), (unsigned)((g_TexpackHitchUs - texUs) / 1000));
++                         (unsigned)(g_TexpackHitchLoads - texLoads), (unsigned)((g_TexpackHitchUs - texUs) / 1000),
++                         (unsigned)(hitchRunUs / 1000), (unsigned)(hitchSwapUs / 1000), (unsigned)(hitchEndUs / 1000),
++                         hitchImports, (unsigned)(hitchImportUs / 1000),
++                         (unsigned)(g_XblaFontBuilds - glyphs), (unsigned)((g_XblaFontBuildUs - glyphUs) / 1000));
 +        }
++        glyphs = g_XblaFontBuilds;
++        glyphUs = g_XblaFontBuildUs;
++        hitchImports = 0;
++        hitchImportUs = hitchRunUs = hitchSwapUs = hitchEndUs = 0;
 +        texLoads = g_TexpackHitchLoads;
 +        texUs = g_TexpackHitchUs;
 +        last = now;
@@ -240,7 +273,7 @@ index 0631a10b3..d45a765d2 100644
      // The render scale: FSR draws the game at a fraction of the window,
      // supersampling at a multiple of it, and the window keeps its aspect ratio
      // as the game's. A multiple stops at GFX_MAX_RENDER_SIDE on the longer
-@@ -8748,7 +8799,7 @@ extern "C" void gfx_start_frame(void) {
+@@ -8748,7 +8824,7 @@ extern "C" void gfx_start_frame(void) {
      // SMAA or a render scale: the frame goes through the backend's post
      // chain on its way to the window, from a single-sampled framebuffer
      game_post_processes = gfx_framebuffers_enabled && gfx_rapi->post_process &&
@@ -249,7 +282,17 @@ index 0631a10b3..d45a765d2 100644
                             gfx_current_dimensions.height != gfx_current_window_dimensions.height);
      if (gfx_framebuffers_enabled && (game_post_processes || gfx_msaa_level > 1)) {
          game_renders_to_framebuffer = true;
-@@ -8799,7 +8850,17 @@ extern "C" void gfx_run(Gfx* commands) {
+@@ -8774,6 +8850,9 @@ extern "C" void gfx_start_frame(void) {
+ uint32_t num_dls = 0;
+ 
+ extern "C" void gfx_run(Gfx* commands) {
++#ifdef PLATFORM_PS5
++    const uint64_t runStart = sysGetMicroseconds();
++#endif
+     ++num_dls;
+     gfx_sp_reset();
+ 
+@@ -8799,7 +8878,17 @@ extern "C" void gfx_run(Gfx* commands) {
      gfx_mark_state_dirty();
      gfx_readable_reset();
      gfx_mesh_start_frame();
@@ -267,6 +310,38 @@ index 0631a10b3..d45a765d2 100644
      gfx_mesh_flush();
      mesh_cur = NULL;
      gfx_flush_for(GFX_FLUSH_OTHER);
+@@ -8835,7 +8924,14 @@ extern "C" void gfx_run(Gfx* commands) {
+         gfx_pre_swap_callback();
+     }
+ 
++#ifdef PLATFORM_PS5
++    const uint64_t swapStart = sysGetMicroseconds();
++    hitchRunUs += swapStart - runStart;
+     gfx_wapi->swap_buffers_begin();
++    hitchSwapUs += sysGetMicroseconds() - swapStart;
++#else
++    gfx_wapi->swap_buffers_begin();
++#endif
+ }
+ 
+ extern "C" void gfx_set_pre_swap_callback(GfxPreSwapCallback cb) {
+@@ -8890,10 +8986,16 @@ extern "C" int gfx_occlusion_result(int slot) {
+ }
+ 
+ extern "C" void gfx_end_frame(void) {
++#ifdef PLATFORM_PS5
++    const uint64_t endStart = sysGetMicroseconds();
++#endif
+     if (!dropped_frame) {
+         gfx_rapi->finish_render();
+         gfx_wapi->swap_buffers_end();
+     }
++#ifdef PLATFORM_PS5
++    hitchEndUs += sysGetMicroseconds() - endStart;
++#endif
+ }
+ 
+ extern "C" void gfx_set_target_fps(int fps) {
 diff --git a/port/fast3d/gfx_post.cpp b/port/fast3d/gfx_post.cpp
 index a4604c97d..8ca829554 100644
 --- a/port/fast3d/gfx_post.cpp
@@ -1192,6 +1267,18 @@ index 4fad217b1..052e9ba9d 100644
 +#endif
 +
  #endif
+diff --git a/port/include/xblafont.h b/port/include/xblafont.h
+index f3d156037..a351ea2e8 100644
+--- a/port/include/xblafont.h
++++ b/port/include/xblafont.h
+@@ -84,6 +84,7 @@ s32 xblaFontHaveGlyphs(void);
+  * Freed by the caller with xblaFontFreeGlyph(). Called on the render thread.
+  */
+ u8 *xblaFontLoadGlyph(u32 glyph, s32 *outWidth, s32 *outHeight);
++void xblaFontWarm(u32 budgetUs);
+ void xblaFontFreeGlyph(u8 *rgba);
+ 
+ /** Drops the atlases and the metrics. The decoded glyphs are kept. */
 diff --git a/port/src/assetdump.c b/port/src/assetdump.c
 index 54f43fba4..50fabf574 100644
 --- a/port/src/assetdump.c
@@ -1778,7 +1865,7 @@ index cc7420715..1d6b3cdef 100644
  		return tile;
  	}
 diff --git a/port/src/gexfront.c b/port/src/gexfront.c
-index f68bccb8f..5da3a8e6b 100644
+index f68bccb8f..f0d6a2fad 100644
 --- a/port/src/gexfront.c
 +++ b/port/src/gexfront.c
 @@ -77,6 +77,7 @@
@@ -1852,21 +1939,22 @@ index f68bccb8f..5da3a8e6b 100644
  /* ---- the setup ---------------------------------------------------------- */
  
  // GoldenEye's scenarios in its own order, as the remake's
-@@ -2612,9 +2653,21 @@ static void frontSetCursorForMission(s32 mission);
+@@ -2612,9 +2653,22 @@ static void frontSetCursorForMission(s32 mission);
  static s32 frontMissionUnderCursor(void);
  static void frontOpenExtra(s32 row);
  
 -#define NUM_EXTRA_ROWS 2
-+#define NUM_EXTRA_ROWS 3
++#define NUM_EXTRA_ROWS 4
  #define EXTRA_CINEMA   0
  #define EXTRA_MONITORS 1
 +#define EXTRA_SETTINGS 2 // the GoldenEye tile's: the PS5 settings page (gyro, triggers, display...)
++#define EXTRA_UPDATES  3 // the GoldenEye tile's: Check for Updates, which its folder hides otherwise
 +
 +static s32 frontExtraRows(void)
 +{
 +#if defined(PLATFORM_PS5) || defined(PD_TILE_TEST)
 +	if (g_Ps5GoldenEyeTile) {
-+		return 3;
++		return 4;
 +	}
 +#endif
 +
@@ -1875,17 +1963,18 @@ index f68bccb8f..5da3a8e6b 100644
  
  // What a row of the Cinema's second page is: GECINEMA_OPENING and
  // GECINEMA_ENDING, then these
-@@ -2934,7 +2987,8 @@ static void frontOpenMonitors(void)
+@@ -2934,7 +2988,9 @@ static void frontOpenMonitors(void)
  static void frontTickExtra(s32 pick, s32 back)
  {
  	if (!g_Front.tabprev) {
 -		g_Front.highlight = g_Front.cursory >= 211 ? EXTRA_MONITORS : EXTRA_CINEMA;
-+		g_Front.highlight = g_Front.cursory >= 241 && frontExtraRows() > EXTRA_SETTINGS ? EXTRA_SETTINGS
++		g_Front.highlight = g_Front.cursory >= 271 && frontExtraRows() > EXTRA_UPDATES ? EXTRA_UPDATES
++			: g_Front.cursory >= 241 && frontExtraRows() > EXTRA_SETTINGS ? EXTRA_SETTINGS
 +			: g_Front.cursory >= 211 ? EXTRA_MONITORS : EXTRA_CINEMA;
  	}
  
  	if (back || (pick && g_Front.tabprev)) {
-@@ -2951,6 +3005,23 @@ static void frontTickExtra(s32 pick, s32 back)
+@@ -2951,6 +3007,28 @@ static void frontTickExtra(s32 pick, s32 back)
  		frontSfx(GESFX_DOOR_METAL_CLOSE2, MENUSOUND_SELECT);
  		frontOpenMonitors();
  	}
@@ -1904,12 +1993,17 @@ index f68bccb8f..5da3a8e6b 100644
 +		frontSfx(GESFX_DOOR_METAL_CLOSE2, MENUSOUND_SELECT);
 +		frontClose();
 +		menuPushDialog(page);
++	} else if (pick && g_Front.highlight == EXTRA_UPDATES) {
++		// Perfect Dark's Check for Updates page, the same way
++		frontSfx(GESFX_DOOR_METAL_CLOSE2, MENUSOUND_SELECT);
++		frontClose();
++		menuPushDialog(&g_UpdateMenuDialog);
 +	}
 +#endif
  }
  
  /**
-@@ -3820,6 +3891,24 @@ void gexFrontTick(void)
+@@ -3820,6 +3898,24 @@ void gexFrontTick(void)
  		inputMouseHideCursorThisFrame();
  	}
  
@@ -1934,7 +2028,7 @@ index f68bccb8f..5da3a8e6b 100644
  	frontTickScreen();
  
  	// A page GoldenEye opens puts the cursor on its first choice (the
-@@ -3914,6 +4003,23 @@ static void frontTickScreen(void)
+@@ -3914,6 +4010,23 @@ static void frontTickScreen(void)
  			g_Front.highlight = g_Front.cursory >= 275.0f ? 2 : g_Front.cursory >= 243.0f ? 1 : 0;
  		}
  
@@ -1958,7 +2052,7 @@ index f68bccb8f..5da3a8e6b 100644
  		if (back || (pick && g_Front.tabprev)) {
  			frontSfx(GESFX_DOOR_METAL_CLOSE2, MENUSOUND_TOGGLEOFF);
  			frontClose();
-@@ -3975,6 +4081,66 @@ s32 gexFrontIsActive(void)
+@@ -3975,6 +4088,66 @@ s32 gexFrontIsActive(void)
  	return g_Front.active;
  }
  
@@ -2025,7 +2119,7 @@ index f68bccb8f..5da3a8e6b 100644
  s32 gexFrontOpen(void)
  {
  	g_FrontLeaving = 0;
-@@ -5580,9 +5746,23 @@ void gexFrontTextWrap(s32 gothic, const char *text, char *out, size_t len, s32 w
+@@ -5580,9 +5753,23 @@ void gexFrontTextWrap(s32 gothic, const char *text, char *out, size_t len, s32 w
  }
  
  /** frontAddStartTabText() and frontAddPreviousTabText(): Bank Gothic, turned, a tab's middle. */
@@ -2049,7 +2143,7 @@ index f68bccb8f..5da3a8e6b 100644
  	s32 width;
  	s32 height;
  	s32 v;
-@@ -5980,8 +6160,11 @@ static void frontWidenBackdrop(void)
+@@ -5980,8 +6167,11 @@ static void frontWidenBackdrop(void)
   */
  static Gfx *frontDrawReleaseBackdrop(Gfx *gdl)
  {
@@ -2062,16 +2156,16 @@ index f68bccb8f..5da3a8e6b 100644
  	if (!tile) {
  		return gdl;
  	}
-@@ -6815,7 +6998,7 @@ static Gfx *frontDrawMission(Gfx *gdl)
+@@ -6815,7 +7005,7 @@ static Gfx *frontDrawMission(Gfx *gdl)
  /** EXTRA: the difficulty page's rows again, with no mission over them. */
  static Gfx *frontDrawExtra(Gfx *gdl)
  {
 -	static const char *rows[NUM_EXTRA_ROWS] = { LANG_N("Cinema\n"), LANG_N("Monitor Programs\n") };
-+	static const char *rows[NUM_EXTRA_ROWS] = { LANG_N("Cinema\n"), LANG_N("Monitor Programs\n"), LANG_N("PS5 Settings\n") };
++	static const char *rows[NUM_EXTRA_ROWS] = { LANG_N("Cinema\n"), LANG_N("Monitor Programs\n"), LANG_N("PS5 Settings\n"), LANG_N("Check for Updates\n") };
  
  	gdl = frontPrint(gdl, 0x37, 0x8f, langTr("EXTRA:\n"), COLOUR_ON);
  
-@@ -6824,7 +7007,7 @@ static Gfx *frontDrawExtra(Gfx *gdl)
+@@ -6824,7 +7014,7 @@ static Gfx *frontDrawExtra(Gfx *gdl)
  		gdl = frontTextSetup(gdl);
  	}
  
@@ -4732,7 +4826,7 @@ index 0d3cce18c..e4a212db1 100644
  {
  	s32 n;
 diff --git a/port/src/update.c b/port/src/update.c
-index b32b6b917..1fa49569b 100644
+index b32b6b917..13253a84d 100644
 --- a/port/src/update.c
 +++ b/port/src/update.c
 @@ -59,9 +59,22 @@
@@ -4806,7 +4900,21 @@ index b32b6b917..1fa49569b 100644
  		snprintf(msg, msgsize, "%s", LANG_N("could not make the new build executable"));
  		remove(newpath);
  		return false;
-@@ -917,6 +948,9 @@ static int updateWorker(void *arg)
+@@ -890,9 +921,13 @@ static int updateWorker(void *arg)
+ 			SDL_UnlockMutex(g_Lock);
+ 			updateSetResult(UPDATE_FOUND, msg);
+ 		} else {
++#ifdef PLATFORM_PS5
++			updateSetResult(UPDATE_CURRENT, "You have the latest version.");
++#else
+ 			updateSetResult(UPDATE_CURRENT, strcmp(VERSION_CHANNEL, "stable") == 0
+ 					? "This is the latest release."
+ 					: "This is the latest dev build.");
++#endif
+ 		}
+ 	} else if (job == UPDATE_JOB_SWITCH) {
+ 		if (updateDownload(true, msg, sizeof(msg))) {
+@@ -917,6 +952,9 @@ static int updateWorker(void *arg)
  	g_Job = UPDATE_JOB_NONE;
  	g_Quiet = false;
  	SDL_UnlockMutex(g_Lock);
@@ -4816,7 +4924,7 @@ index b32b6b917..1fa49569b 100644
  
  	return 0;
  }
-@@ -928,7 +962,10 @@ static void updateStart(s32 job)
+@@ -928,7 +966,10 @@ static void updateStart(s32 job)
  	}
  
  	if (g_Thread) {
@@ -4828,7 +4936,7 @@ index b32b6b917..1fa49569b 100644
  		g_Thread = NULL;
  	}
  
-@@ -1203,7 +1240,9 @@ void updateInstall(void)
+@@ -1203,7 +1244,9 @@ void updateInstall(void)
  
  bool updateIsAvailable(void)
  {
@@ -4839,7 +4947,7 @@ index b32b6b917..1fa49569b 100644
  	return true;
  #else
  	return false;
-@@ -1428,6 +1467,17 @@ static void updateExec(const char *path)
+@@ -1428,6 +1471,17 @@ static void updateExec(const char *path)
  
  		_spawnv(_P_NOWAIT, path, quoted ? quoted : argv);
  	}
@@ -4857,7 +4965,7 @@ index b32b6b917..1fa49569b 100644
  #else
  	execv(path, (char *const *)sysGetArgv());
  	// Only reached if the new build could not be started at all, which leaves
-@@ -1497,9 +1547,10 @@ void updateShutdown(void)
+@@ -1497,9 +1551,10 @@ void updateShutdown(void)
  		bool quiet;
  
  		SDL_LockMutex(g_Lock);
@@ -4870,7 +4978,7 @@ index b32b6b917..1fa49569b 100644
  			// The startup check is still asking. It has nothing to write and
  			// nothing to leave behind, and a request stuck connecting to a
 diff --git a/port/src/updatemenu.c b/port/src/updatemenu.c
-index 06123262a..e878a5541 100644
+index 06123262a..61fc5fbe2 100644
 --- a/port/src/updatemenu.c
 +++ b/port/src/updatemenu.c
 @@ -40,6 +40,10 @@ static char g_SwitchBackup[160];
@@ -4884,7 +4992,22 @@ index 06123262a..e878a5541 100644
  
  /**
   * What is running, and what the last question was answered with.
-@@ -96,7 +100,14 @@ static char *menutextUpdateAction(struct menuitem *item)
+@@ -52,8 +56,14 @@ static char *menutextUpdateStatus(struct menuitem *item)
+ {
+ 	const char *msg = updateGetMessage();
+ 
++#if defined(PLATFORM_PS5) || defined(PD_TILE_TEST)
++	// one channel, and the branch is Dab's Mod's: the commit is the version (build.sh)
++	snprintf(g_UpdateText, sizeof(g_UpdateText), langTr("This build: Perfect Eye %s\n%s\n"),
++			VERSION_HASH, langTr(msg[0] ? msg : "Not checked yet."));
++#else
+ 	snprintf(g_UpdateText, sizeof(g_UpdateText), langTr("This build: %s %s (%s)\n%s\n"),
+ 			VERSION_BRANCH, VERSION_HASH, VERSION_CHANNEL, langTr(msg[0] ? msg : "Not checked yet."));
++#endif
+ 
+ 	if (g_SwitchBackup[0]) {
+ 		u32 len = strlen(g_UpdateText);
+@@ -96,7 +106,14 @@ static char *menutextUpdateAction(struct menuitem *item)
  		snprintf(g_UpdateText, sizeof(g_UpdateText), langTr("Download and Install %s\n"), updateGetVersion());
  		return g_UpdateText;
  	case UPDATE_STAGED:
@@ -4899,7 +5022,24 @@ index 06123262a..e878a5541 100644
  	default:
  		break;
  	}
-@@ -648,6 +659,36 @@ static MenuDialogHandlerResult menudialogUpdate(s32 operation, struct menudialog
+@@ -532,6 +549,8 @@ struct menuitem g_UpdateMenuItems[] = {
+ 		0,
+ 		menuhandlerUpdateAgain,
+ 	},
++#if !defined(PLATFORM_PS5) && !defined(PD_TILE_TEST)
++	// The channels: the PS5 has one (update.c), so nothing to show or switch to there
+ 	{
+ 		MENUITEMTYPE_SEPARATOR,
+ 		0,
+@@ -566,6 +585,7 @@ struct menuitem g_UpdateMenuItems[] = {
+ 		0,
+ 		menuhandlerUpdateSwitch,
+ 	},
++#endif
+ 	{
+ 		MENUITEMTYPE_SEPARATOR,
+ 		0,
+@@ -648,6 +668,36 @@ static MenuDialogHandlerResult menudialogUpdate(s32 operation, struct menudialog
  		dialog->focuseditem = &g_UpdateMenuItems[2];
  	}
  
@@ -4936,7 +5076,7 @@ index 06123262a..e878a5541 100644
  	return 0;
  }
  
-@@ -921,25 +962,44 @@ void updatenoticeMainMenuTick(struct menudialogdef *menudef, struct menuinputs *
+@@ -921,25 +971,44 @@ void updatenoticeMainMenuTick(struct menudialogdef *menudef, struct menuinputs *
  
  	g_NoticeIdle += g_Vars.diffframe60;
  
@@ -4988,7 +5128,7 @@ index 06123262a..e878a5541 100644
  
  	return g_NoticeText;
  }
-@@ -951,6 +1011,9 @@ static MenuItemHandlerResult menuhandlerUpdateNoticeNow(s32 operation, struct me
+@@ -951,6 +1020,9 @@ static MenuItemHandlerResult menuhandlerUpdateNoticeNow(s32 operation, struct me
  
  		menuPopDialog();
  		menuPushDialog(&g_UpdateMenuDialog);
@@ -5142,6 +5282,145 @@ index 1481b7a61..f3c6787bf 100644
  	configRegisterFloat("Video.FsrSharpness", &vidFsrSharpness, 0.f, 2.f);
  	configRegisterInt("Video.Renderer", &vidRenderer, VIDEO_RENDERER_OPENGL, VIDEO_RENDERER_VULKAN);
  	configRegisterInt("Video.GpuVertices", &vidGpuVertices, 0, 1);
+diff --git a/port/src/xblafont.c b/port/src/xblafont.c
+index a62b148e4..ccfebe042 100644
+--- a/port/src/xblafont.c
++++ b/port/src/xblafont.c
+@@ -336,6 +336,7 @@ static struct xblafontline lines[XBLAFONT_NUM_FONTS];
+ 
+ static struct xblafontglyph glyphs[XBLAFONT_NUM_BANKS][XBLAFONT_NUM_FONTS][XBLAFONT_NUM_CHARS];
+ static s32 numBuilt;
++static s32 warmNext; // xblaFontWarm()'s place
+ static s32 numMissing;
+ static s32 numOffLine;
+ 
+@@ -1873,6 +1874,95 @@ static void xblaFontForget(void)
+ 	numBuilt = 0;
+ 	numMissing = 0;
+ 	numOffLine = 0;
++	warmNext = 0;
++}
++
++/** One glyph built, if it has not been asked for before. */
++u32 g_XblaFontBuilds;  // glyphs built, and the time: the PS5's hitch line (gfx_pc.cpp)
++u64 g_XblaFontBuildUs;
++
++static struct xblafontglyph *xblaFontEnsure(s32 bank, s32 id, s32 index)
++{
++	struct xblafontglyph *out = &glyphs[bank][id][index];
++
++	if (!out->tried) {
++		u64 start;
++
++		// A band is made out of the body, so the body is built first whichever
++		// of them is asked for. That is also what keeps them in step: one
++		// picture, one scale, one shape.
++		if (bank != XBLAFONT_BANK_BODY && !glyphs[XBLAFONT_BANK_BODY][id][index].tried) {
++			xblaFontEnsure(XBLAFONT_BANK_BODY, id, index);
++		}
++
++		start = sysGetMicroseconds();
++
++		out->tried = (bank != XBLAFONT_BANK_BODY
++				? xblaFontBuildOutline(out, id, index, bank)
++				: xblaFontBuildBody(out, id, index)) ? 1 : -1;
++
++		if (out->tried > 0) {
++			numBuilt++;
++		} else {
++			numMissing++;
++			free(out->rgba);
++			out->rgba = NULL;
++		}
++
++		g_XblaFontBuilds++;
++		g_XblaFontBuildUs += sysGetMicroseconds() - start;
++	}
++
++	return out;
++}
++
++/**
++ * Builds the glyphs a page has not drawn yet, a few each frame, before a page needs them.
++ *
++ * A glyph is made the first time it is drawn, and its outline is scores of taps a pixel:
++ * a page of small text the player had not opened yet (Check for Updates, What's New) made
++ * dozens on the frames it opened, and on the PS5 that was eight frames of 53 ms
++ * (2026-10-19). Only the fonts something has already drawn, so a font nothing uses is
++ * never opened, and only the outline the menu is set to. On the thread that draws them
++ * (video.c, the frame's start), so nothing here is shared with another thread.
++ */
++void xblaFontWarm(u32 budgetUs)
++{
++	const u64 start = sysGetMicroseconds();
++	const s32 perbank = XBLAFONT_NUM_FONTS * XBLAFONT_NUM_CHARS;
++
++	if (!xblaFontHaveGlyphs() || numBuilt == 0) {
++		return;
++	}
++
++	while (warmNext < 2 * perbank) {
++		const s32 i = warmNext++;
++		const s32 bank = i < perbank ? XBLAFONT_BANK_BODY
++			: g_ModOptions.cleantext ? XBLAFONT_BANK_OUTLINE : XBLAFONT_BANK_BORDER;
++		const s32 id = (i % perbank) / XBLAFONT_NUM_CHARS;
++		const s32 index = i % XBLAFONT_NUM_CHARS;
++		s32 c;
++		s32 used = 0;
++
++		if (glyphs[bank][id][index].tried) {
++			continue;
++		}
++
++		// a font something has drawn already
++		for (c = 0; c < XBLAFONT_NUM_CHARS && !used; c++) {
++			used = glyphs[XBLAFONT_BANK_BODY][id][c].tried != 0;
++		}
++
++		if (!used) {
++			continue;
++		}
++
++		xblaFontEnsure(bank, id, index);
++
++		if (sysGetMicroseconds() - start >= budgetUs) {
++			break;
++		}
++	}
+ }
+ 
+ u8 *xblaFontLoadGlyph(u32 glyph, s32 *outWidth, s32 *outHeight)
+@@ -1916,29 +2006,7 @@ u8 *xblaFontLoadGlyph(u32 glyph, s32 *outWidth, s32 *outHeight)
+ 		return NULL;
+ 	}
+ 
+-	out = &glyphs[bank][id][index];
+-
+-	if (!out->tried) {
+-		// A band is made out of the body, so the body is built first whichever
+-		// of them is asked for. That is also what keeps them in step: one
+-		// picture, one scale, one shape.
+-		if (bank != XBLAFONT_BANK_BODY && !glyphs[XBLAFONT_BANK_BODY][id][index].tried) {
+-			glyphs[XBLAFONT_BANK_BODY][id][index].tried =
+-				xblaFontBuildBody(&glyphs[XBLAFONT_BANK_BODY][id][index], id, index) ? 1 : -1;
+-		}
+-
+-		out->tried = (bank != XBLAFONT_BANK_BODY
+-				? xblaFontBuildOutline(out, id, index, bank)
+-				: xblaFontBuildBody(out, id, index)) ? 1 : -1;
+-
+-		if (out->tried > 0) {
+-			numBuilt++;
+-		} else {
+-			numMissing++;
+-			free(out->rgba);
+-			out->rgba = NULL;
+-		}
+-	}
++	out = xblaFontEnsure(bank, id, index);
+ 
+ 	if (out->tried < 0 || !out->rgba) {
+ 		return NULL;
 diff --git a/src/game/bondmove.c b/src/game/bondmove.c
 index 41fc439cd..e528c23f9 100644
 --- a/src/game/bondmove.c
@@ -5399,10 +5678,18 @@ index ea7811d68..a83d0fde0 100644
  			updatenoticeMainMenuTick(dialogdef, data->dialog2.inputs, false);
  #endif
 diff --git a/src/game/menu.c b/src/game/menu.c
-index 1279d1766..b24fd58a0 100644
+index 1279d1766..73b7753a3 100644
 --- a/src/game/menu.c
 +++ b/src/game/menu.c
-@@ -1683,8 +1683,18 @@ void menuOpenDialog(struct menudialogdef *dialogdef, struct menudialog *dialog,
+@@ -12,6 +12,7 @@
+ #include "gewatch.h"
+ #include "trace.h"
+ #include "langpack.h"
++#include "xblafont.h"
+ #include "net/net.h"
+ #endif
+ #include "../lib/naudio/n_sndp.h"
+@@ -1683,8 +1684,18 @@ void menuOpenDialog(struct menudialogdef *dialogdef, struct menudialog *dialog,
  	dialog->height = dialog->dstheight;
  }
  
@@ -5421,7 +5708,7 @@ index 1279d1766..b24fd58a0 100644
  #ifndef PLATFORM_N64
  	// Prevent the mouse from immediately changing a slider's value, as was
  	// happening while entering the Audio menu.
-@@ -4421,6 +4431,8 @@ u32 g_MenuCThresh = 120;
+@@ -4421,6 +4432,8 @@ u32 g_MenuCThresh = 120;
  
  Gfx *menuRenderDialog(Gfx *gdl, struct menudialog *dialog, struct menu *menu, bool lightweight)
  {
@@ -5430,7 +5717,7 @@ index 1279d1766..b24fd58a0 100644
  #ifndef PLATFORM_N64
  	const s32 side = netLobbyMenuDialogAlign(dialog->definition);
  #endif
-@@ -4599,6 +4611,36 @@ Gfx *menuRenderDialogs(Gfx *gdl)
+@@ -4599,6 +4612,36 @@ Gfx *menuRenderDialogs(Gfx *gdl)
  	}
  #endif
  
@@ -5467,7 +5754,18 @@ index 1279d1766..b24fd58a0 100644
  	return menuRenderDialogsInner(gdl);
  }
  
-@@ -6331,6 +6373,10 @@ Gfx *menuRender(Gfx *gdl)
+@@ -6313,6 +6356,10 @@ Gfx *menuRenderBackgroundLayer2(Gfx *gdl, u8 bg, f32 frac)
+ 
+ Gfx *menuRender(Gfx *gdl)
+ {
++#ifndef PLATFORM_N64
++	// the Xbox 360 font's glyphs a page has not drawn yet, ahead of the page (xblafont.c)
++	xblaFontWarm(1500);
++#endif
+ 	static u32 usepiece = 1;
+ 
+ 	g_MpPlayerNum = 0;
+@@ -6331,6 +6378,10 @@ Gfx *menuRender(Gfx *gdl)
  	// and health bar would be drawn over the folder and are left out.
  	bool overfront = false;
  
@@ -5478,7 +5776,7 @@ index 1279d1766..b24fd58a0 100644
  	if (geIntroIsActive()) {
  		gdl = geIntroRender(gdl);
  
-@@ -6382,6 +6428,9 @@ Gfx *menuRender(Gfx *gdl)
+@@ -6382,6 +6433,9 @@ Gfx *menuRender(Gfx *gdl)
  		gDPFillRectangle(gdl++, viGetViewLeft(), viGetViewTop(),
  				viGetViewLeft() + viGetViewWidth() + 1, viGetViewTop() + viGetViewHeight() + 2);
  		gDPPipeSync(gdl++);
@@ -5488,7 +5786,7 @@ index 1279d1766..b24fd58a0 100644
  	} else
  #endif
  	if (g_MenuData.nextbg != 255) {
-@@ -6410,7 +6459,7 @@ Gfx *menuRender(Gfx *gdl)
+@@ -6410,7 +6464,7 @@ Gfx *menuRender(Gfx *gdl)
  	}
  
  #ifndef PLATFORM_N64
@@ -5497,7 +5795,7 @@ index 1279d1766..b24fd58a0 100644
  #else
  	if (IS8MB() && g_MenuData.unk5d4) {
  #endif
-@@ -6498,8 +6547,8 @@ Gfx *menuRender(Gfx *gdl)
+@@ -6498,8 +6552,8 @@ Gfx *menuRender(Gfx *gdl)
  	// Render the second layer of the background (for the combat simulator cone,
  	// which draws over the top of the hud piece)
  #ifndef PLATFORM_N64
