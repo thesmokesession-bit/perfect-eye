@@ -29,6 +29,9 @@ players use the Dab's Mod dev build of that commit.
   (md5 of the `.z64`: `e03b088b6ac9e0080440efed07c1e40f`).
 - For the GoldenEye tile, also a **GoldenEye 007 (USA)** ROM. The GoldenEye tile runs on the
   Perfect Dark engine, so its folder needs both ROMs.
+- Optional, for GoldenEye in HD: your own copy of **GoldenEye 007 for the Xbox 360** (the XBLA
+  version). It goes on top of the GoldenEye ROM and gives GoldenEye that version's HD levels,
+  characters, guns, props, skies and menus.
 - Optional, for Perfect Dark in HD: your own copy of the **Xbox 360 (XBLA) release** of Perfect
   Dark. It goes on top of the N64 ROM, which the game still needs, and gives Perfect Dark the Xbox
   360 version's HD models and textures (see [HD textures](#hd-textures)).
@@ -85,7 +88,12 @@ under **Options → Extended Options → Texture Packs**.
 - **Perfect Dark, the N64 look:** **PD Forever Plus HD** (Retro Foundry). The Texture Packs
   page's **Community Packs** button downloads it straight to the console. Its **Ultimate** and
   **XBLA** packs go on top of the Xbox 360 release, so they need that package too.
-- **GoldenEye:** download `PerfectEye-GoldenEye-HD-Textures.zip` from the release and unzip it into
+- **GoldenEye, the Xbox 360 version:** put your own copy in `PPSA64008/added-content/`, any of:
+  the package as it comes off an Xbox 360 (the `584108A9` folder and everything in it; the game
+  unpacks it into `added-content/GoldenEye 007 XBLA/` the first time it starts, about a minute),
+  the folder it unpacks to (the one holding `default.xex` and `files/`), or a `.7z` or `.zip` of
+  that folder. Levels, characters, guns, props, skies and the folder screens then come from it.
+- **GoldenEye, texture pack:** download `PerfectEye-GoldenEye-HD-Textures.zip` from the release and unzip it into
   `PPSA64008/texture-packs/`. It is [GoldenEye 007 HD](https://github.com/GhostlyDark/GoldenEye-007-HD)
   by intermissionfb (font textures by GhostlyDark), converted to this game's texture numbers and
   capped at 1024 pixels. It covers the levels and weapons (nearly every surface in the missions

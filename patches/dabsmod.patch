@@ -1358,6 +1358,226 @@ index 616f6effc..a423cef7b 100644
  			queuedTotal += nextSize;
  
  			if (dumpFile) {
+diff --git a/port/src/gebean.c b/port/src/gebean.c
+index 667fff94b..4fe955db4 100644
+--- a/port/src/gebean.c
++++ b/port/src/gebean.c
+@@ -2693,6 +2693,203 @@ static s32 gebeanWantEntry(const char *name, void *arg)
+ 		|| strstr(lower, GEBEAN_WANT_ORIGINAL_HELICOPTER) != NULL;
+ }
+ 
++/*
++ * The release as it comes off an Xbox 360: an STFS package (LIVE, CON or
++ * PIRS), usually under 0000000000000000/584108A9/000D0000/ with a 40-digit
++ * name. Unpacked once, whole, into a folder of its own beside it in dir
++ * (GEBEAN_STFS_DIR), the same folder a player who unpacked it by hand would
++ * have made; the package itself is left where it is.
++ */
++#define GEBEAN_STFS_DIR "GoldenEye 007 XBLA"
++#define GEBEAN_STFS_DONE "unpacked-from-package.txt"
++
++struct gebeanstfsscan {
++	char found[FS_MAXPATH + 1];
++	const char *dir;
++	s32 depth;
++};
++
++static s32 gebeanStfsIsRelease(const char *path)
++{
++	struct x360stfs stfs;
++	s32 release = 0;
++
++	if (fsFileSize(path) < 0x100000 || !x360StfsOpen(&stfs, path)) {
++		return 0;
++	}
++
++	if (x360StfsFind(&stfs, "default.xex") >= 0) {
++		char buf[FS_MAXPATH + 1];
++
++		for (u32 i = 0; i < stfs.numFiles && !release; i++) {
++			release = !stfs.files[i].isDir && x360StfsPath(&stfs, i, buf, sizeof(buf))
++				&& strncmp(buf, GEBEAN_TREE "/", strlen(GEBEAN_TREE) + 1) == 0;
++		}
++	}
++
++	x360StfsClose(&stfs);
++
++	return release;
++}
++
++static void gebeanStfsScanEntry(const char *name, void *arg)
++{
++	struct gebeanstfsscan *scan = arg;
++	char path[FS_MAXPATH + 1];
++
++	if (scan->found[0] || name[0] == '.' || strcmp(name, GEBEAN_STFS_DIR) == 0) {
++		return;
++	}
++
++	snprintf(path, sizeof(path), "%s/%s", scan->dir, name);
++
++	if (gebeanIsDir(path)) {
++		if (scan->depth > 0) {
++			struct gebeanstfsscan sub = { { 0 }, path, scan->depth - 1 };
++
++			fsScanDir(path, gebeanStfsScanEntry, &sub);
++			snprintf(scan->found, sizeof(scan->found), "%s", sub.found);
++		}
++	} else {
++		FILE *fp = fopen(path, "rb");
++		char magic[4] = { 0 };
++
++		if (fp) {
++			if (fread(magic, 1, 4, fp) != 4) {
++				magic[0] = 0;
++			}
++
++			fclose(fp);
++		}
++
++		if ((!memcmp(magic, "LIVE", 4) || !memcmp(magic, "CON ", 4) || !memcmp(magic, "PIRS", 4))
++				&& gebeanStfsIsRelease(path)) {
++			snprintf(scan->found, sizeof(scan->found), "%s", path);
++		}
++	}
++}
++
++/** Every file of the package at pkg into out. The count written, or -1. */
++static s32 gebeanStfsUnpack(const char *pkg, const char *out)
++{
++	struct x360stfs stfs;
++	u8 *buf = malloc(0x100000);
++	s32 written = 0;
++
++	if (!buf || !x360StfsOpen(&stfs, pkg)) {
++		free(buf);
++		return -1;
++	}
++
++	for (u32 i = 0; i < stfs.numFiles && written >= 0; i++) {
++		char rel[FS_MAXPATH + 1];
++		char dst[FS_MAXPATH + 1];
++		char part[FS_MAXPATH + 8];
++		struct x360stfsstream stream;
++		FILE *fp;
++
++		if (!x360StfsPath(&stfs, i, rel, sizeof(rel))) {
++			continue;
++		}
++
++		snprintf(dst, sizeof(dst), "%s/%s", out, rel);
++
++		if (stfs.files[i].isDir) {
++			fsCreateDir(dst);
++			continue;
++		}
++
++		// a folder the table lists after its files
++		for (char *c = dst + strlen(out) + 1; *c; c++) {
++			if (*c == '/') {
++				*c = '\0';
++				fsCreateDir(dst);
++				*c = '/';
++			}
++		}
++
++		if (fsFileSize(dst) == (s32)stfs.files[i].size) {
++			written++;
++			continue;
++		}
++
++		snprintf(part, sizeof(part), "%s.part", dst);
++
++		if (!x360StfsStreamOpen(&stfs, i, &stream) || !(fp = fopen(part, "wb"))) {
++			written = -1;
++			break;
++		}
++
++		for (u32 at = 0; at < stream.size && written >= 0; at += 0x100000) {
++			const u32 len = MIN(0x100000, stream.size - at);
++
++			if (!x360StfsStreamRead(&stream, at, len, buf) || fwrite(buf, 1, len, fp) != len) {
++				written = -1;
++			}
++		}
++
++		x360StfsStreamClose(&stream);
++		fclose(fp);
++
++		if (written < 0 || fsReplaceFile(part, dst) != 0) {
++			written = -1;
++			break;
++		}
++
++		written++;
++	}
++
++	x360StfsClose(&stfs);
++	free(buf);
++
++	return written;
++}
++
++/**
++ * The release's package in dir (or a few folders down, as an Xbox 360's
++ * content folders put it) unpacked into dir/GEBEAN_STFS_DIR, unless that
++ * folder is already the release. 1 when the folder is there to be found.
++ */
++static s32 gebeanStfsPrepare(const char *dir)
++{
++	char out[FS_MAXPATH + 1];
++	char done[FS_MAXPATH + 1];
++	struct gebeanstfsscan scan = { { 0 }, dir, 5 };
++	FILE *fp;
++	s32 n;
++
++	snprintf(out, sizeof(out), "%s/" GEBEAN_STFS_DIR, dir);
++	snprintf(done, sizeof(done), "%s/" GEBEAN_STFS_DONE, out);
++
++	if (gebeanHasTree(out) && fsFileSize(done) >= 0) {
++		return 1;
++	}
++
++	fsScanDir(dir, gebeanStfsScanEntry, &scan);
++
++	if (!scan.found[0]) {
++		return gebeanHasTree(out);
++	}
++
++	sysLogPrintf(LOG_NOTE, "gebean: unpacking the GoldenEye XBLA package %s into %s, this happens once", scan.found, out);
++	fsCreateDir(out);
++	n = gebeanStfsUnpack(scan.found, out);
++
++	if (n <= 0 || !gebeanHasTree(out)) {
++		sysLogPrintf(LOG_ERROR, "gebean: could not unpack %s (%d files)", scan.found, n);
++		return 0;
++	}
++
++	if ((fp = fopen(done, "wb"))) {
++		fprintf(fp, "%s\n", scan.found);
++		fclose(fp);
++	}
++
++	sysLogPrintf(LOG_NOTE, "gebean: unpacked %d files of the package", n);
++
++	return 1;
++}
++
+ static void gebeanSetRoot(const char *tree)
+ {
+ 	snprintf(rootPath, sizeof(rootPath), "%s/files", tree);
+@@ -2732,6 +2929,11 @@ static s32 gebeanLocate(s32 mayUnpack)
+ 
+ 			snprintf(dir, sizeof(dir), "%s", fsFullPath(dirs[d]));
+ 
++			// (or the package as it came off the console, unpacked into one)
++			if (d == 0 && gebeanIsDir(dir)) {
++				gebeanStfsPrepare(dir);
++			}
++
+ 			if (gebeanIsDir(dir) && gebeanScan(dir, 0, GEBEAN_SCAN_DEPTH, found, sizeof(found))) {
+ 				gebeanSetRoot(found);
+ 				return 1;
 diff --git a/port/src/gedeathcam.c b/port/src/gedeathcam.c
 index fafdd8e28..156fb91b0 100644
 --- a/port/src/gedeathcam.c

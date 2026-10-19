@@ -1,5 +1,12 @@
 # Update notes
 
+## 1.1.0 (unreleased)
+
+- **GoldenEye's Xbox 360 version:** with your own copy in the GoldenEye tile's `added-content/`,
+  GoldenEye uses its HD levels, characters, guns, props, skies and folder screens.
+- The game unpacks the Xbox 360 package itself, as it comes off the console, the first time it
+  starts. No tools needed on your computer.
+
 ## 1.0.0 (2026-10-19)
 
 The first public release: Perfect Dark and GoldenEye 007 as two native PS5 tiles.
