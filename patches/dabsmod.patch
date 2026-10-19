@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 98b574212..fcd59866e 100644
+index 98b574212..6f07f1968 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -67,6 +67,15 @@ elseif(APPLE)
@@ -18,7 +18,20 @@ index 98b574212..fcd59866e 100644
  elseif(UNIX)
    # Generic *nix; assume Linux
    set(TARGET_OS "linux")
-@@ -278,7 +287,13 @@ endif()
+@@ -149,6 +158,12 @@ set(VERSION_ARCH "${TARGET_ARCH}")
+ set(VERSION_ROMID "${ROMID}")
+ set(VERSION_BUILD "${CMAKE_BUILD_TYPE}")
+ 
++# The PS5 build names the Perfect Eye commit it was made from (build.sh): this tree stays at the
++# Dab's Mod commit its patch applies to, the same for every Perfect Eye build
++if(DEFINED PS5_VERSION_HASH AND NOT PS5_VERSION_HASH STREQUAL "")
++  set(VERSION_HASH "${PS5_VERSION_HASH}")
++endif()
++
+ if((VERSION_BRANCH STREQUAL "") OR (VERSION_BRANCH STREQUAL "HEAD"))
+   set(VERSION_BRANCH "port-custom")
+ endif()
+@@ -278,7 +293,13 @@ endif()
  set(LIBS )
  
  # SDL2
@@ -32,7 +45,7 @@ index 98b574212..fcd59866e 100644
  if(NINTENDO_SWITCH)
    if(NOT SDL2_LIBRARY OR NOT SDL2_INCLUDE_DIR)
      # sometimes FindSDL2 just wants us to suffer and does not set these
-@@ -290,7 +305,13 @@ include_directories(SYSTEM "${SDL2_INCLUDE_DIR}")
+@@ -290,7 +311,13 @@ include_directories(SYSTEM "${SDL2_INCLUDE_DIR}")
  list(APPEND LIBS "${SDL2_LIBRARY}")
  
  # ZLib
@@ -46,7 +59,7 @@ index 98b574212..fcd59866e 100644
  
  # What Ghost Trials reaches the ghost server over. See the note at the top of
  # port/src/ghostnet.c for why this is two different things.
-@@ -304,7 +325,14 @@ else()
+@@ -304,7 +331,14 @@ else()
    # libcurl everywhere else, there being no system HTTP API to use instead.
    # macOS carries it in the SDK; on Linux it is libcurl4-openssl-dev to build
    # against and libcurl4, which every desktop already has, to run.
@@ -61,7 +74,7 @@ index 98b574212..fcd59866e 100644
  
    if(CURL_FOUND)
      message(STATUS "libcurl found - ghost server support enabled")
-@@ -325,7 +353,9 @@ endif()
+@@ -325,7 +359,9 @@ endif()
  if(ZLIB_INCLUDE_DIR)
    include_directories(SYSTEM "${ZLIB_INCLUDE_DIR}")
  endif()
@@ -72,7 +85,7 @@ index 98b574212..fcd59866e 100644
  
  # GL
  if(NOT GL_LIBRARY)
-@@ -335,11 +365,16 @@ if(NOT GL_LIBRARY)
+@@ -335,11 +371,16 @@ if(NOT GL_LIBRARY)
      set(GL_LIBRARY EGL glapi drm_nouveau)
    elseif(APPLE)
      set(GL_LIBRARY "-framework OpenGL")
@@ -90,7 +103,7 @@ index 98b574212..fcd59866e 100644
  
  # Vulkan: the second renderer (port/fast3d/gfx_vulkan.cpp, Video.Renderer).
  # Nothing links against a Vulkan library - SDL finds the loader at run time,
-@@ -368,13 +403,16 @@ if(PD_VULKAN AND NOT NINTENDO_SWITCH)
+@@ -368,13 +409,16 @@ if(PD_VULKAN AND NOT NINTENDO_SWITCH)
      endforeach()
      # MSYS2's shaderc is built on winpthreads, which Windows links whole and
      # static below, for everything
@@ -109,7 +122,7 @@ index 98b574212..fcd59866e 100644
      # That it all links, which a split or partial install may not
      include(CheckCXXSourceCompiles)
      set(CMAKE_REQUIRED_INCLUDES "${SHADERC_INCLUDE_DIR}")
-@@ -422,6 +460,9 @@ if(NOT EXTRA_LIBRARIES)
+@@ -422,6 +466,9 @@ if(NOT EXTRA_LIBRARIES)
          -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive,-Bdynamic)
    elseif(NINTENDO_SWITCH)
      set(EXTRA_LIBRARIES stdc++ pthread)

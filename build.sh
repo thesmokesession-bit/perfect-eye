@@ -11,6 +11,7 @@ export PACBREW
 radv="$root/radv/mihawk-vulkan-review"
 sdk="$radv/.deps/native/ps5-payload-sdk"
 env="export PS5_PAYLOAD_SDK=$sdk RADV_ROOT=$radv PACBREW=$PACBREW SHADERC_PS5=$root/deps/shaderc-ps5 RADV_INCLUDE_ROOT=$radv/.deps/native/radv-release;"
+hash=$(git -C "$root" rev-parse --short=9 HEAD)
 case ${1:-build} in
 radv)
     WORKDIR="$radv" "$root/docker/run.sh" "
@@ -25,9 +26,13 @@ configure)
     "$root/docker/run.sh" "$env
         cmake -S src-upstream -B build-ps5/pd -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_TOOLCHAIN_FILE=$root/cmake/ps5-toolchain.cmake -DUPDATE_CHANNEL=dev \
-            -DPS5_UPDATE_REPO=${PS5_UPDATE_REPO:-}" ;;
+            -DPS5_UPDATE_REPO=${PS5_UPDATE_REPO:-} -DPS5_VERSION_HASH=$hash" ;;
 build)
-    "$root/docker/run.sh" "$env cmake --build build-ps5/pd -- -k 0" ;;
+    # the build's commit is this repo's: src-upstream stays at the Dab's Mod commit the patch is
+    # made against, so its own would be the same for every Perfect Eye build and Check for
+    # Updates would never see a new one
+    "$root/docker/run.sh" "$env cmake build-ps5/pd -DPS5_VERSION_HASH=$hash > /dev/null &&
+        cmake --build build-ps5/pd -- -k 0" ;;
 *)
     echo "usage: $0 [radv|shaderc|configure|build]" >&2; exit 2 ;;
 esac
