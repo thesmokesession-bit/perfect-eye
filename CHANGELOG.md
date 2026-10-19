@@ -5,7 +5,6 @@
 **From 1.0.0 or 1.1.0, install this one from your computer** (`ps5-push.command` or FTP): the
 updater in those versions can freeze the game. From 1.2.0 on, updates install from the game.
 
-
 - **Updates offered as the game starts.** When a newer release is out, an Update Available box
   comes up on the first screen: Perfect Dark's Choose Your Reality, or GoldenEye's folder.
   **Update Now** downloads it, installs it and restarts the game by itself. **Later**, **Skip This
@@ -14,8 +13,8 @@ updater in those versions can freeze the game. From 1.2.0 on, updates install fr
   quitting to the home screen.
 - **Download and Install no longer freezes the game.** The check before it left a network
   connection to close as its thread ended, and on the PS5 that thread never finished, so the
-  install waited on it forever. Only the online lobby keeps connections open now, and the updater
-  no longer waits on a finished check.
+  install waited on it forever. The updater no longer waits on a finished check, and no
+  connection is closed at a thread's end any more.
 - **An update installed from the game starts.** The downloaded eboot.bin had no permission to
   run, so the PS5 said "Can't start the game or app". It gets the same permissions FTP gives it.
 - **The update check answers in a second or two** instead of a minute: requests share one open
