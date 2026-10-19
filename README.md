@@ -29,6 +29,9 @@ players use the Dab's Mod dev build of that commit.
   (md5 of the `.z64`: `e03b088b6ac9e0080440efed07c1e40f`).
 - For the GoldenEye tile, also a **GoldenEye 007 (USA)** ROM. The GoldenEye tile runs on the
   Perfect Dark engine, so its folder needs both ROMs.
+- Optional, for Perfect Dark in HD: your own copy of the **Xbox 360 (XBLA) release** of Perfect
+  Dark. It goes on top of the N64 ROM, which the game still needs, and gives Perfect Dark the Xbox
+  360 version's HD models and textures (see [HD textures](#hd-textures)).
 
 ## Installing
 
