@@ -1,5 +1,14 @@
 # Update notes
 
+## 1.2.0 (unreleased)
+
+- **Updates offered as the game starts.** When a newer release is out, an Update Available box
+  comes up on the first screen: Perfect Dark's Choose Your Reality, or GoldenEye's folder.
+  **Update Now** downloads it, installs it and restarts the game by itself. **Later**, **Skip This
+  Version** and **Don't Show Update Notices** are there too.
+- Check for Updates' **Restart Now** starts the new build straight away on the PS5, instead of
+  quitting to the home screen.
+
 ## 1.1.0 (2026-10-19)
 
 - **GoldenEye's Xbox 360 version:** with your own copy in the GoldenEye tile's `added-content/`,

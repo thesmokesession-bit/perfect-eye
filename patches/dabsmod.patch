@@ -1137,6 +1137,18 @@ index b7e918e4a..f954015b6 100644
  s32 texpackDumpOpen(void);
  s32 texpackDumpTextureNum(s32 n);
  void texpackDumpClose(void);
+diff --git a/port/include/update.h b/port/include/update.h
+index 9f27ad48f..7dd9417cd 100644
+--- a/port/include/update.h
++++ b/port/include/update.h
+@@ -141,5 +141,7 @@ struct menuinputs;
+ void updatenoticeInit(void);
+ void updatenoticeStart(void);
+ void updatenoticeMainMenuTick(struct menudialogdef *menudef, struct menuinputs *inputs, bool ontop);
++bool updatenoticeTake(void);
++extern struct menudialogdef g_UpdateNoticeMenuDialog;
+ 
+ #endif
 diff --git a/port/include/video.h b/port/include/video.h
 index 4fad217b1..052e9ba9d 100644
 --- a/port/include/video.h
@@ -1748,10 +1760,18 @@ index cc7420715..1d6b3cdef 100644
  		return tile;
  	}
 diff --git a/port/src/gexfront.c b/port/src/gexfront.c
-index f68bccb8f..fbde2e0be 100644
+index f68bccb8f..5da3a8e6b 100644
 --- a/port/src/gexfront.c
 +++ b/port/src/gexfront.c
-@@ -258,6 +258,12 @@ enum { SCREEN_MODE, SCREEN_MPOPTIONS, SCREEN_LEVEL, SCREEN_SCENARIO, SCREEN_HEAL
+@@ -77,6 +77,7 @@
+ #include "gefolder.h"
+ #include "xblamesh.h"
+ #include "gexfront.h"
++#include "update.h"
+ #include "net/net.h"
+ #include "geconvert.h"
+ #include "config.h"
+@@ -258,6 +259,12 @@ enum { SCREEN_MODE, SCREEN_MPOPTIONS, SCREEN_LEVEL, SCREEN_SCENARIO, SCREEN_HEAL
  	SCREEN_MISSION, SCREEN_DIFFICULTY, SCREEN_007OPTIONS, SCREEN_BRIEFING, SCREEN_CINEMA, SCREEN_CINEMAPICK,
  	SCREEN_EXTRA, SCREEN_MONITORS, SCREEN_MONITORVIEW, SCREEN_REPORT, SCREEN_STATS };
  
@@ -1764,7 +1784,7 @@ index f68bccb8f..fbde2e0be 100644
  /**
   * GoldenEye's mission folder (front.c's mission_folder_setup_entries): its nine
   * chapter headings and, under each, its missions, in the order the folder gives
-@@ -1591,7 +1597,8 @@ static s32 frontMusic(void)
+@@ -1591,7 +1598,8 @@ static s32 frontMusic(void)
  
  s32 gexFrontMusic(void)
  {
@@ -1774,7 +1794,7 @@ index f68bccb8f..fbde2e0be 100644
  }
  
  /* ---- the stages --------------------------------------------------------- */
-@@ -1856,6 +1863,39 @@ static void frontBuildCharacters(void)
+@@ -1856,6 +1864,39 @@ static void frontBuildCharacters(void)
  	}
  }
  
@@ -1814,7 +1834,7 @@ index f68bccb8f..fbde2e0be 100644
  /* ---- the setup ---------------------------------------------------------- */
  
  // GoldenEye's scenarios in its own order, as the remake's
-@@ -2612,9 +2652,21 @@ static void frontSetCursorForMission(s32 mission);
+@@ -2612,9 +2653,21 @@ static void frontSetCursorForMission(s32 mission);
  static s32 frontMissionUnderCursor(void);
  static void frontOpenExtra(s32 row);
  
@@ -1837,7 +1857,7 @@ index f68bccb8f..fbde2e0be 100644
  
  // What a row of the Cinema's second page is: GECINEMA_OPENING and
  // GECINEMA_ENDING, then these
-@@ -2934,7 +2986,8 @@ static void frontOpenMonitors(void)
+@@ -2934,7 +2987,8 @@ static void frontOpenMonitors(void)
  static void frontTickExtra(s32 pick, s32 back)
  {
  	if (!g_Front.tabprev) {
@@ -1847,7 +1867,7 @@ index f68bccb8f..fbde2e0be 100644
  	}
  
  	if (back || (pick && g_Front.tabprev)) {
-@@ -2951,6 +3004,23 @@ static void frontTickExtra(s32 pick, s32 back)
+@@ -2951,6 +3005,23 @@ static void frontTickExtra(s32 pick, s32 back)
  		frontSfx(GESFX_DOOR_METAL_CLOSE2, MENUSOUND_SELECT);
  		frontOpenMonitors();
  	}
@@ -1871,7 +1891,32 @@ index f68bccb8f..fbde2e0be 100644
  }
  
  /**
-@@ -3914,6 +3984,23 @@ static void frontTickScreen(void)
+@@ -3820,6 +3891,24 @@ void gexFrontTick(void)
+ 		inputMouseHideCursorThisFrame();
+ 	}
+ 
++#if defined(PLATFORM_PS5) || defined(PD_TILE_TEST)
++	// The GoldenEye tile's first page: a newer release, if there is one, is offered
++	// over it once the player has left the pad alone for a moment. The folder makes
++	// way for the notice; whatever closes it brings the folder back (mainmenu.c).
++	if (g_Ps5GoldenEyeTile && g_Front.screen == SCREEN_MODE) {
++		static s32 idle;
++
++		idle = joyGetButtons(0, 0xffff) || joyGetStickX(0) > 20 || joyGetStickX(0) < -20
++			|| joyGetStickY(0) > 20 || joyGetStickY(0) < -20 ? 0 : idle + g_Vars.diffframe60;
++
++		if (idle >= 45 && updatenoticeTake()) {
++			frontClose();
++			menuPushDialog(&g_UpdateNoticeMenuDialog);
++			return;
++		}
++	}
++#endif
++
+ 	frontTickScreen();
+ 
+ 	// A page GoldenEye opens puts the cursor on its first choice (the
+@@ -3914,6 +4003,23 @@ static void frontTickScreen(void)
  			g_Front.highlight = g_Front.cursory >= 275.0f ? 2 : g_Front.cursory >= 243.0f ? 1 : 0;
  		}
  
@@ -1895,7 +1940,7 @@ index f68bccb8f..fbde2e0be 100644
  		if (back || (pick && g_Front.tabprev)) {
  			frontSfx(GESFX_DOOR_METAL_CLOSE2, MENUSOUND_TOGGLEOFF);
  			frontClose();
-@@ -3975,6 +4062,66 @@ s32 gexFrontIsActive(void)
+@@ -3975,6 +4081,66 @@ s32 gexFrontIsActive(void)
  	return g_Front.active;
  }
  
@@ -1962,7 +2007,7 @@ index f68bccb8f..fbde2e0be 100644
  s32 gexFrontOpen(void)
  {
  	g_FrontLeaving = 0;
-@@ -5580,9 +5727,23 @@ void gexFrontTextWrap(s32 gothic, const char *text, char *out, size_t len, s32 w
+@@ -5580,9 +5746,23 @@ void gexFrontTextWrap(s32 gothic, const char *text, char *out, size_t len, s32 w
  }
  
  /** frontAddStartTabText() and frontAddPreviousTabText(): Bank Gothic, turned, a tab's middle. */
@@ -1986,7 +2031,7 @@ index f68bccb8f..fbde2e0be 100644
  	s32 width;
  	s32 height;
  	s32 v;
-@@ -5980,8 +6141,11 @@ static void frontWidenBackdrop(void)
+@@ -5980,8 +6160,11 @@ static void frontWidenBackdrop(void)
   */
  static Gfx *frontDrawReleaseBackdrop(Gfx *gdl)
  {
@@ -1999,7 +2044,7 @@ index f68bccb8f..fbde2e0be 100644
  	if (!tile) {
  		return gdl;
  	}
-@@ -6815,7 +6979,7 @@ static Gfx *frontDrawMission(Gfx *gdl)
+@@ -6815,7 +6998,7 @@ static Gfx *frontDrawMission(Gfx *gdl)
  /** EXTRA: the difficulty page's rows again, with no mission over them. */
  static Gfx *frontDrawExtra(Gfx *gdl)
  {
@@ -2008,7 +2053,7 @@ index f68bccb8f..fbde2e0be 100644
  
  	gdl = frontPrint(gdl, 0x37, 0x8f, langTr("EXTRA:\n"), COLOUR_ON);
  
-@@ -6824,7 +6988,7 @@ static Gfx *frontDrawExtra(Gfx *gdl)
+@@ -6824,7 +7007,7 @@ static Gfx *frontDrawExtra(Gfx *gdl)
  		gdl = frontTextSetup(gdl);
  	}
  
@@ -4590,7 +4635,7 @@ index 0d3cce18c..e4a212db1 100644
  {
  	s32 n;
 diff --git a/port/src/update.c b/port/src/update.c
-index b32b6b917..4879cfd9a 100644
+index b32b6b917..9b3b659dd 100644
 --- a/port/src/update.c
 +++ b/port/src/update.c
 @@ -59,9 +59,22 @@
@@ -4664,33 +4709,153 @@ index b32b6b917..4879cfd9a 100644
  	return true;
  #else
  	return false;
-@@ -1428,6 +1455,10 @@ static void updateExec(const char *path)
+@@ -1428,6 +1455,17 @@ static void updateExec(const char *path)
  
  		_spawnv(_P_NOWAIT, path, quoted ? quoted : argv);
  	}
 +#elif defined(PLATFORM_PS5)
-+	// A title cannot start a program: the new eboot.bin runs the next time the
-+	// player starts the game from the home screen
-+	(void)path;
++	{
++		// The system starts the title's eboot.bin again in this one's place, the way
++		// a PS4 or PS5 game restarts itself. If it says no, the game just ends and the
++		// new eboot.bin runs the next time it is started from the home screen.
++		extern int sceSystemServiceLoadExec(const char *path, char *const argv[]);
++		int err = sceSystemServiceLoadExec(path, NULL);
++
++		sysLogPrintf(LOG_ERROR, "update: the system would not restart the game (0x%08x)", (unsigned)err);
++		fflush(NULL);
++	}
  #else
  	execv(path, (char *const *)sysGetArgv());
  	// Only reached if the new build could not be started at all, which leaves
 diff --git a/port/src/updatemenu.c b/port/src/updatemenu.c
-index 06123262a..d43711808 100644
+index 06123262a..e878a5541 100644
 --- a/port/src/updatemenu.c
 +++ b/port/src/updatemenu.c
-@@ -96,7 +96,11 @@ static char *menutextUpdateAction(struct menuitem *item)
+@@ -40,6 +40,10 @@ static char g_SwitchBackup[160];
+ static bool g_SwitchBackupOk;
+ // See menudialogUpdate().
+ static bool g_UpdateFocusAction = false;
++// "Update Now" on the notice: the page installs what it finds and restarts the
++// game by itself, without the player pressing its rows (menudialogUpdate())
++static bool g_UpdateAuto = false;
++static s32 g_UpdateAutoWait = 0;
+ 
+ /**
+  * What is running, and what the last question was answered with.
+@@ -96,7 +100,14 @@ static char *menutextUpdateAction(struct menuitem *item)
  		snprintf(g_UpdateText, sizeof(g_UpdateText), langTr("Download and Install %s\n"), updateGetVersion());
  		return g_UpdateText;
  	case UPDATE_STAGED:
++		if (g_UpdateAuto) {
++			return (char *)langTr("Installed. Restarting...\n");
++		}
 +#ifdef PLATFORM_PS5
-+		return (char *)langTr("Quit Now (start it again from the home screen)\n");
++		return (char *)langTr("Restart Now\n");
 +#else
  		return (char *)langTr("Restart Now\n");
 +#endif
  	default:
  		break;
  	}
+@@ -648,6 +659,36 @@ static MenuDialogHandlerResult menudialogUpdate(s32 operation, struct menudialog
+ 		dialog->focuseditem = &g_UpdateMenuItems[2];
+ 	}
+ 
++	if (operation == MENUOP_CLOSE) {
++		// Backed out: what is downloading still lands, and runs on the next start
++		g_UpdateAuto = false;
++	}
++
++	if (operation == MENUOP_TICK && g_UpdateAuto) {
++		switch (updateGetState()) {
++		case UPDATE_FOUND:
++			sysLogPrintf(LOG_NOTE, "updatenotice: installing %s", updateGetVersion());
++			updateInstall();
++			break;
++		case UPDATE_STAGED:
++			// a second on "Restarting..." first, so the change is not a surprise
++			g_UpdateAutoWait += g_Vars.diffframe60;
++
++			if (g_UpdateAutoWait >= 60) {
++				sysLogPrintf(LOG_NOTE, "updatenotice: installed, restarting");
++				g_UpdateAuto = false;
++				exit(0); // the way the page's own row does it: cleanup() starts the new build
++			}
++			break;
++		case UPDATE_BUSY:
++			break;
++		default:
++			// this build is the latest after all, or the download failed: the page says which
++			g_UpdateAuto = false;
++			break;
++		}
++	}
++
+ 	return 0;
+ }
+ 
+@@ -921,25 +962,44 @@ void updatenoticeMainMenuTick(struct menudialogdef *menudef, struct menuinputs *
+ 
+ 	g_NoticeIdle += g_Vars.diffframe60;
+ 
+-	if (g_NoticeState != NOTICE_READY || g_NoticeIdle < UPDATENOTICE_IDLE) {
++	if (g_NoticeIdle < UPDATENOTICE_IDLE) {
+ 		return;
+ 	}
+ 
+-	if (!g_NoticeEnabled) {
+-		// Switched off on the Check for Updates page while the answer was on
+-		// its way.
+-		g_NoticeState = NOTICE_DONE;
+-		return;
++	if (updatenoticeTake()) {
++		menuPushDialog(&g_UpdateNoticeMenuDialog);
++	}
++}
++
++/**
++ * Whether the notice is due now: true once, when a newer build is known. For a
++ * screen that is not a menu dialog (GoldenEye's folder), which then makes way
++ * for g_UpdateNoticeMenuDialog itself.
++ */
++bool updatenoticeTake(void)
++{
++	updatenoticePoll();
++
++	if (g_NoticeState != NOTICE_READY) {
++		return false;
+ 	}
+ 
++	// Not if it was switched off on the Check for Updates page while the
++	// answer was on its way
+ 	g_NoticeState = NOTICE_DONE;
+-	menuPushDialog(&g_UpdateNoticeMenuDialog);
++
++	return g_NoticeEnabled != 0;
+ }
+ 
+ static char *menutextUpdateNotice(struct menuitem *item)
+ {
++#if defined(PLATFORM_PS5) || defined(PD_TILE_TEST)
++	snprintf(g_NoticeText, sizeof(g_NoticeText), langTr("Perfect Eye %s is out.\nUpdate now? It downloads, installs\nand restarts the game by itself.\n"),
++			g_NoticeVersion);
++#else
+ 	snprintf(g_NoticeText, sizeof(g_NoticeText), langTr("%s is out.\nThis build is %s (%s).\n"),
+ 			g_NoticeVersion, VERSION_HASH, VERSION_CHANNEL);
++#endif
+ 
+ 	return g_NoticeText;
+ }
+@@ -951,6 +1011,9 @@ static MenuItemHandlerResult menuhandlerUpdateNoticeNow(s32 operation, struct me
+ 
+ 		menuPopDialog();
+ 		menuPushDialog(&g_UpdateMenuDialog);
++		g_UpdateAuto = true;
++		g_UpdateAutoWait = 0;
++		sysLogPrintf(LOG_NOTE, "updatenotice: updating now");
+ 
+ 		// Asked again now, whatever the startup check or the cache said: the
+ 		// page's rows are then the real answer, and the startup check never
 diff --git a/port/src/video.c b/port/src/video.c
 index 1481b7a61..f3c6787bf 100644
 --- a/port/src/video.c
@@ -4865,18 +5030,19 @@ index 41fc439cd..e528c23f9 100644
  		allowmcross = (PLAYER_EXTCFG().mouseaimmode == MOUSEAIM_CLASSIC) && !aimlock &&
  			(movedata.freelookdx || movedata.freelookdy || g_Vars.currentplayer->swivelpos[0] || g_Vars.currentplayer->swivelpos[1]);
 diff --git a/src/game/filemgr.c b/src/game/filemgr.c
-index aef9f054e..b6b6f2881 100644
+index aef9f054e..5262fcec7 100644
 --- a/src/game/filemgr.c
 +++ b/src/game/filemgr.c
-@@ -20,6 +20,7 @@
+@@ -20,6 +20,8 @@
  #include "data.h"
  #include "types.h"
  #include "mpsetups.h"
 +#include "system.h"
++#include "update.h"
  
  // bss
  struct fileguid g_FilemgrFileToCopy;
-@@ -2803,6 +2804,63 @@ MenuDialogHandlerResult filemgrMainMenuDialog(s32 operation, struct menudialogde
+@@ -2803,6 +2805,69 @@ MenuDialogHandlerResult filemgrMainMenuDialog(s32 operation, struct menudialogde
  	case MENUOP_TICK:
  		filelistsTick();
  		break;
@@ -4934,6 +5100,12 @@ index aef9f054e..b6b6f2881 100644
 +
 +					g_Menus[g_MpPlayerNum].fm.unke2c = 1;
 +				}
++			}
++
++			// The Perfect Dark tile's first page: a newer release, if there is one, is
++			// offered here, as the game starts (the GoldenEye tile's folder does its own)
++			if (!g_Ps5GoldenEyeTile) {
++				updatenoticeMainMenuTick(dialogdef, data->dialog2.inputs, true);
 +			}
 +		}
 +		break;
