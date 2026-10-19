@@ -12,6 +12,10 @@
   connection to close as its thread ended, and on the PS5 that thread never finished, so the
   install waited on it forever. Only the online lobby keeps connections open now, and the updater
   no longer waits on a finished check.
+- **An update installed from the game starts.** The downloaded eboot.bin had no permission to
+  run, so the PS5 said "Can't start the game or app". It gets the same permissions FTP gives it.
+- **The update check answers in a second or two** instead of a minute: requests share one open
+  connection instead of closing one each time, which the PS5 was slow to do.
 
 ## 1.1.0 (2026-10-19)
 

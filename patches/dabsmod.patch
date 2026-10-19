@@ -2111,7 +2111,7 @@ index 1907f81fe..ebb17da0d 100644
  	snprintf(g_NoticeTitle, sizeof(g_NoticeTitle), "CONVERTING %s", name);
  	for (char *c = g_NoticeTitle; *c; ++c) {
 diff --git a/port/src/ghostnet.c b/port/src/ghostnet.c
-index ecfb59a65..0f59e7c99 100644
+index ecfb59a65..167318cb1 100644
 --- a/port/src/ghostnet.c
 +++ b/port/src/ghostnet.c
 @@ -20,6 +20,9 @@
@@ -2198,7 +2198,7 @@ index ecfb59a65..0f59e7c99 100644
  static int ghostnetCurlProgress(void *arg, curl_off_t dltotal, curl_off_t dlnow, curl_off_t ultotal, curl_off_t ulnow)
  {
  	const struct ghostnetreq *req = arg;
-@@ -777,10 +847,66 @@ static int ghostnetCurlProgress(void *arg, curl_off_t dltotal, curl_off_t dlnow,
+@@ -777,10 +847,109 @@ static int ghostnetCurlProgress(void *arg, curl_off_t dltotal, curl_off_t dlnow,
  	return req->cancel && *req->cancel ? 1 : 0;
  }
  
@@ -2258,15 +2258,58 @@ index ecfb59a65..0f59e7c99 100644
 +	return curl;
 +}
 +
++static bool ghostnetSendOn(CURL *curl, const struct ghostnetreq *req, struct ghostnetbuf *buf,
++		s32 *status, char *err, u32 errsize);
++
++/**
++ * The lobby's threads keep a handle each (req->keep). Every other request - the updater,
++ * community packs, the mod catalogue, Ghost Trials, reports - comes from a short job on a
++ * thread that is waited on, and shares one handle, one request at a time, that is never
++ * cleaned up: on the PS5 cleaning up a handle with a TLS connection open took 25 s or for
++ * ever (2026-10-19), and the update check spent a minute on two of them.
++ */
++static SDL_mutex *g_CurlOneLock;
++static CURL *g_CurlOne;
++
  bool ghostnetSend(const struct ghostnetreq *req, struct ghostnetbuf *buf,
  		s32 *status, char *err, u32 errsize)
  {
 -	CURL *curl = curl_easy_init();
-+	CURL *curl = req->keep ? ghostnetCurl() : curl_easy_init();
++	static SDL_SpinLock once;
++	bool ok;
++
++	if (req->keep) {
++		return ghostnetSendOn(ghostnetCurl(), req, buf, status, err, errsize);
++	}
++
++	SDL_AtomicLock(&once);
++	if (!g_CurlOneLock) {
++		g_CurlOneLock = SDL_CreateMutex();
++	}
++	SDL_AtomicUnlock(&once);
++
++	SDL_LockMutex(g_CurlOneLock);
++
++	if (g_CurlOne) {
++		// the options go, the open connection and its caches stay
++		curl_easy_reset(g_CurlOne);
++	} else {
++		g_CurlOne = curl_easy_init();
++	}
++
++	ok = ghostnetSendOn(g_CurlOne, req, buf, status, err, errsize);
++	SDL_UnlockMutex(g_CurlOneLock);
++
++	return ok;
++}
++
++static bool ghostnetSendOn(CURL *curl, const struct ghostnetreq *req, struct ghostnetbuf *buf,
++		s32 *status, char *err, u32 errsize)
++{
  	struct curl_slist *headers = NULL;
  	char header[128];
  	CURLcode res;
-@@ -794,6 +920,19 @@ bool ghostnetSend(const struct ghostnetreq *req, struct ghostnetbuf *buf,
+@@ -794,6 +963,19 @@ bool ghostnetSend(const struct ghostnetreq *req, struct ghostnetbuf *buf,
  	}
  
  	curl_easy_setopt(curl, CURLOPT_URL, req->url);
@@ -2286,11 +2329,12 @@ index ecfb59a65..0f59e7c99 100644
  	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, ghostnetCurlWrite);
  	curl_easy_setopt(curl, CURLOPT_WRITEDATA, buf);
  	curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)(req->timeout > 0 ? req->timeout : GHOSTNET_TIMEOUT));
-@@ -878,7 +1017,22 @@ bool ghostnetSend(const struct ghostnetreq *req, struct ghostnetbuf *buf,
+@@ -878,8 +1060,19 @@ bool ghostnetSend(const struct ghostnetreq *req, struct ghostnetbuf *buf,
  		curl_slist_free_all(headers);
  	}
  
 -	curl_easy_cleanup(curl);
+-
 +#ifdef PLATFORM_PS5
 +	{
 +		// where a slow request's time went
@@ -2304,13 +2348,10 @@ index ecfb59a65..0f59e7c99 100644
 +				(int)(total * 1000));
 +	}
 +#endif
-+	if (!req->keep || !g_CurlTls) {
-+		ghostnetCurlRelease(curl);
-+	}
- 
  	return res == CURLE_OK;
  }
-@@ -1524,6 +1678,9 @@ static int ghostnetWorker(void *arg)
+ 
+@@ -1524,6 +1717,9 @@ static int ghostnetWorker(void *arg)
  		snprintf(msg, sizeof(msg), "%s", LANG_N("wrong name or PIN"));
  	}
  
@@ -4691,7 +4732,7 @@ index 0d3cce18c..e4a212db1 100644
  {
  	s32 n;
 diff --git a/port/src/update.c b/port/src/update.c
-index b32b6b917..7d3fa9ba9 100644
+index b32b6b917..1fa49569b 100644
 --- a/port/src/update.c
 +++ b/port/src/update.c
 @@ -59,9 +59,22 @@
@@ -4745,16 +4786,27 @@ index b32b6b917..7d3fa9ba9 100644
  	struct updaterel rel;
  	char err[160] = { 0 };
  	bool ok = updateFetchManifestFrom(updateOtherBaseUrl(), &rel, err, sizeof(err));
-@@ -777,7 +802,7 @@ static bool updateDownload(bool other, char *msg, u32 msgsize)
+@@ -777,11 +802,17 @@ static bool updateDownload(bool other, char *msg, u32 msgsize)
  		return false;
  	}
  
 -#ifndef PLATFORM_WIN32
-+#if !defined(PLATFORM_WIN32) && !defined(PLATFORM_PS5) // a title's eboot is not exec()ed by its mode bits
++#if !defined(PLATFORM_WIN32)
  	// The package the release job builds carries the executable bit; a file
  	// this wrote itself does not, and a copy of the game nothing can start is
- 	// the same as no copy at all.
-@@ -917,6 +942,9 @@ static int updateWorker(void *arg)
+-	// the same as no copy at all.
++	// the same as no copy at all. The PS5 too: its eboot.bin without the bit is
++	// "Can't start the game or app" from the home screen (2026-10-19). 0777 is
++	// what the console's FTP gives the one sent from a computer.
++#ifdef PLATFORM_PS5
++	if (chmod(newpath, 0777) != 0) {
++#else
+ 	if (chmod(newpath, 0755) != 0) {
++#endif
+ 		snprintf(msg, msgsize, "%s", LANG_N("could not make the new build executable"));
+ 		remove(newpath);
+ 		return false;
+@@ -917,6 +948,9 @@ static int updateWorker(void *arg)
  	g_Job = UPDATE_JOB_NONE;
  	g_Quiet = false;
  	SDL_UnlockMutex(g_Lock);
@@ -4764,7 +4816,7 @@ index b32b6b917..7d3fa9ba9 100644
  
  	return 0;
  }
-@@ -928,7 +956,10 @@ static void updateStart(s32 job)
+@@ -928,7 +962,10 @@ static void updateStart(s32 job)
  	}
  
  	if (g_Thread) {
@@ -4776,7 +4828,7 @@ index b32b6b917..7d3fa9ba9 100644
  		g_Thread = NULL;
  	}
  
-@@ -1203,7 +1234,9 @@ void updateInstall(void)
+@@ -1203,7 +1240,9 @@ void updateInstall(void)
  
  bool updateIsAvailable(void)
  {
@@ -4787,7 +4839,7 @@ index b32b6b917..7d3fa9ba9 100644
  	return true;
  #else
  	return false;
-@@ -1428,6 +1461,17 @@ static void updateExec(const char *path)
+@@ -1428,6 +1467,17 @@ static void updateExec(const char *path)
  
  		_spawnv(_P_NOWAIT, path, quoted ? quoted : argv);
  	}
@@ -4805,7 +4857,7 @@ index b32b6b917..7d3fa9ba9 100644
  #else
  	execv(path, (char *const *)sysGetArgv());
  	// Only reached if the new build could not be started at all, which leaves
-@@ -1497,9 +1541,10 @@ void updateShutdown(void)
+@@ -1497,9 +1547,10 @@ void updateShutdown(void)
  		bool quiet;
  
  		SDL_LockMutex(g_Lock);
