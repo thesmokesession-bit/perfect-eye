@@ -1,6 +1,6 @@
 # Update notes
 
-## 1.1.0 (unreleased)
+## 1.1.0 (2026-10-19)
 
 - **GoldenEye's Xbox 360 version:** with your own copy in the GoldenEye tile's `added-content/`,
   GoldenEye uses its HD levels, characters, guns, props, skies and folder screens.
@@ -11,6 +11,8 @@
   to the folder.
 - The GoldenEye tile's online pages and settings page play GoldenEye's folder music instead of
   Perfect Dark's menu music.
+- **Check for Updates finds new releases.** Every build said it was the same version, so the game
+  never offered an update. 1.0.0 offers 1.1.0, and each release after it is told apart.
 
 ## 1.0.0 (2026-10-19)
 
