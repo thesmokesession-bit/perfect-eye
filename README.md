@@ -11,7 +11,8 @@ PS5 homebrew, with GoldenEye 007 on a home screen tile of its own.
   own resolution (3840x2160 on a 4K set).
 - **Online with PC players.** Dab's Mod's lobby: rooms, room codes, co-op, counter-op, kill cam,
   match summaries. A PS5 and a PC on the same build play together.
-- **HD textures** for both games (see [HD textures](#hd-textures)).
+- **HD for both games:** Perfect Dark's Xbox 360 remaster (from your own copy of the release),
+  HD texture packs for Perfect Dark, and GoldenEye 007 HD (see [HD textures](#hd-textures)).
 
 You need your own ROMs. This project ships no game data.
 
