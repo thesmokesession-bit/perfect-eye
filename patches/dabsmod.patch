@@ -1038,13 +1038,14 @@ index 651f6c31f..2d1cb89a1 100644
  /**
   * The release's own set of one of GoldenEye's two fonts - gothic 0 for Zurich
 diff --git a/port/include/gexfront.h b/port/include/gexfront.h
-index 827edc653..230209a57 100644
+index 827edc653..8c146fa4b 100644
 --- a/port/include/gexfront.h
 +++ b/port/include/gexfront.h
-@@ -19,6 +19,9 @@
+@@ -19,6 +19,10 @@
  // are not there, and the caller shows Perfect Dark's GE Plus dialog instead.
  s32 gexFrontOpen(void);
  s32 gexFrontIsActive(void);
++s32 gexFrontBodyOrder(s32 *out, s32 max); // every body, GoldenEye's characters first
 +s32 gexFrontTileTheme(void); // the GoldenEye tile's Perfect Dark pages, drawn in GoldenEye's colours
 +Gfx *gexFrontRenderTileBackdrop(Gfx *gdl);
 +s32 gexFrontTileBooting(void); // the GoldenEye tile before GoldenEye is up: draw and play nothing of Perfect Dark's
@@ -1478,7 +1479,7 @@ index cc7420715..1d6b3cdef 100644
  		return tile;
  	}
 diff --git a/port/src/gexfront.c b/port/src/gexfront.c
-index f68bccb8f..9b6a3ae0e 100644
+index f68bccb8f..38153ad5f 100644
 --- a/port/src/gexfront.c
 +++ b/port/src/gexfront.c
 @@ -258,6 +258,12 @@ enum { SCREEN_MODE, SCREEN_MPOPTIONS, SCREEN_LEVEL, SCREEN_SCENARIO, SCREEN_HEAL
@@ -1494,7 +1495,47 @@ index f68bccb8f..9b6a3ae0e 100644
  /**
   * GoldenEye's mission folder (front.c's mission_folder_setup_entries): its nine
   * chapter headings and, under each, its missions, in the order the folder gives
-@@ -3914,6 +3920,23 @@ static void frontTickScreen(void)
+@@ -1856,6 +1862,39 @@ static void frontBuildCharacters(void)
+ 	}
+ }
+ 
++/**
++ * Every Combat Simulator body in GoldenEye's order, for Perfect Dark's own
++ * character pages in GoldenEye's mode (setup.c): GoldenEye's characters first,
++ * as the folder's Characters page has them (Bond first), then the rest.
++ */
++s32 gexFrontBodyOrder(s32 *out, s32 max)
++{
++	const s32 total = mpGetNumBodies();
++	s32 n = 0;
++
++	frontBuildCharacters();
++
++	if (g_Front.numcharacters < total) {
++		for (s32 k = 0; k < g_Front.numcharacters && n < max; k++) {
++			out[n++] = g_Front.characters[k];
++		}
++	}
++
++	for (s32 i = 0; i < total && n < max; i++) {
++		s32 seen = 0;
++
++		for (s32 k = 0; k < n && !seen; k++) {
++			seen = out[k] == i;
++		}
++
++		if (!seen) {
++			out[n++] = i;
++		}
++	}
++
++	return n;
++}
++
+ /* ---- the setup ---------------------------------------------------------- */
+ 
+ // GoldenEye's scenarios in its own order, as the remake's
+@@ -3914,6 +3953,23 @@ static void frontTickScreen(void)
  			g_Front.highlight = g_Front.cursory >= 275.0f ? 2 : g_Front.cursory >= 243.0f ? 1 : 0;
  		}
  
@@ -1518,7 +1559,7 @@ index f68bccb8f..9b6a3ae0e 100644
  		if (back || (pick && g_Front.tabprev)) {
  			frontSfx(GESFX_DOOR_METAL_CLOSE2, MENUSOUND_TOGGLEOFF);
  			frontClose();
-@@ -3975,6 +3998,66 @@ s32 gexFrontIsActive(void)
+@@ -3975,6 +4031,66 @@ s32 gexFrontIsActive(void)
  	return g_Front.active;
  }
  
@@ -1585,7 +1626,7 @@ index f68bccb8f..9b6a3ae0e 100644
  s32 gexFrontOpen(void)
  {
  	g_FrontLeaving = 0;
-@@ -5580,9 +5663,23 @@ void gexFrontTextWrap(s32 gothic, const char *text, char *out, size_t len, s32 w
+@@ -5580,9 +5696,23 @@ void gexFrontTextWrap(s32 gothic, const char *text, char *out, size_t len, s32 w
  }
  
  /** frontAddStartTabText() and frontAddPreviousTabText(): Bank Gothic, turned, a tab's middle. */
@@ -1609,7 +1650,7 @@ index f68bccb8f..9b6a3ae0e 100644
  	s32 width;
  	s32 height;
  	s32 v;
-@@ -5980,8 +6077,11 @@ static void frontWidenBackdrop(void)
+@@ -5980,8 +6110,11 @@ static void frontWidenBackdrop(void)
   */
  static Gfx *frontDrawReleaseBackdrop(Gfx *gdl)
  {
@@ -3576,18 +3617,39 @@ index c927e5ead..2c21202fb 100644
  	} else {
  		snprintf(tail, sizeof(tail), " (1/%d)", s_Create.maxhumans);
 diff --git a/port/src/netprofile.c b/port/src/netprofile.c
-index e743746e0..508a3dfbd 100644
+index e743746e0..ba503992d 100644
 --- a/port/src/netprofile.c
 +++ b/port/src/netprofile.c
-@@ -13,6 +13,7 @@
+@@ -13,6 +13,9 @@
  #include "config.h"
  #include "net/netlobby.h"
  #include "netprofile.h"
 +#include "langpack.h"
++#include "gexfront.h"
++#include "modloader.h"
  
  /*
   * The online player profile (the owner, F3 20261012-115801: "option to copy
-@@ -186,6 +187,11 @@ static char *netProfileTextName(struct menuitem *item)
+@@ -111,6 +114,18 @@ void netProfileEnter(void)
+ 		netProfileToPlayer(p);
+ 	}
+ 
++	// GoldenEye's mode (its own ONLINE tab) starts a profile that was never
++	// changed from Perfect Dark's first character on GoldenEye's first: Bond
++	if (g_GexPlusMode && p->base.mpbodynum == 0 && p->base.mpheadnum == 0) {
++		s32 order[1];
++
++		if (gexFrontBodyOrder(order, 1) == 1 && order[0] != 0) {
++			p->base.mpbodynum = order[0];
++			p->base.mpheadnum = mpGetMpheadnumByMpbodynum(order[0]);
++			netProfileFromPlayer(p);
++		}
++	}
++
+ 	memset(&p->fileguid, 0, sizeof(p->fileguid));
+ 	netProfileTick();
+ 
+@@ -186,6 +201,11 @@ static char *netProfileTextName(struct menuitem *item)
  	return name;
  }
  
@@ -3599,7 +3661,7 @@ index e743746e0..508a3dfbd 100644
  static MenuItemHandlerResult handlerProfileName(s32 operation, struct menuitem *item, union handlerdata *data)
  {
  	if (operation == MENUOP_CHECKDISABLED) {
-@@ -249,7 +255,10 @@ static MenuDialogHandlerResult dialogProfile(s32 operation, struct menudialogdef
+@@ -249,7 +269,10 @@ static MenuDialogHandlerResult dialogProfile(s32 operation, struct menudialogdef
  }
  
  static struct menuitem s_ProfileItems[] = {
@@ -4917,6 +4979,115 @@ index a3a438de7..11eeafbdb 100644
  #if VERSION >= VERSION_NTSC_1_0
  #if VERSION >= VERSION_JPN_FINAL
  	if (IS8MB())
+diff --git a/src/game/mplayer/setup.c b/src/game/mplayer/setup.c
+index fe62131ac..dcd735bba 100644
+--- a/src/game/mplayer/setup.c
++++ b/src/game/mplayer/setup.c
+@@ -29,6 +29,7 @@
+ #include "modborrow.h"
+ #include "mod.h"
+ #include "gexplus.h"
++#include "gexfront.h"
+ #include "geguns.h"
+ #include "arenatabs.h"
+ #endif
+@@ -957,6 +958,38 @@ MenuItemHandlerResult func0f179d6c(s32 operation, struct menuitem *item, union h
+ /**
+  * This function is used by both player body selection and bot body selection.
+  */
++#ifndef PLATFORM_N64
++/**
++ * The character carousel's places in GoldenEye's mode: GoldenEye's characters
++ * first (gexFrontBodyOrder()), Perfect Dark's after. Elsewhere a place is
++ * the body's number.
++ */
++static s32 mpBodyAtPlace(s32 place)
++{
++	s32 order[256];
++	const s32 n = g_GexPlusMode ? gexFrontBodyOrder(order, ARRAYCOUNT(order)) : 0;
++
++	return place >= 0 && place < n ? order[place] : place;
++}
++
++static s32 mpPlaceOfBody(s32 mpbodynum)
++{
++	s32 order[256];
++	const s32 n = g_GexPlusMode ? gexFrontBodyOrder(order, ARRAYCOUNT(order)) : 0;
++
++	for (s32 i = 0; i < n; i++) {
++		if (order[i] == mpbodynum) {
++			return i;
++		}
++	}
++
++	return mpbodynum;
++}
++#else
++#define mpBodyAtPlace(place) (place)
++#define mpPlaceOfBody(body) (body)
++#endif
++
+ MenuItemHandlerResult mpCharacterBodyMenuHandler(s32 operation, struct menuitem *item, union handlerdata *data, s32 mpbodynum, s32 mpheadnum, bool isplayer)
+ {
+ 	switch (operation) {
+@@ -988,7 +1021,7 @@ MenuItemHandlerResult mpCharacterBodyMenuHandler(s32 operation, struct menuitem
+ 		g_Menus[g_MpPlayerNum].menumodel.zoom = 30;
+ 		break;
+ 	case MENUOP_21:
+-		if (!challengeIsFeatureUnlocked(mpGetBodyRequiredFeature(data->carousel.value))) {
++		if (!challengeIsFeatureUnlocked(mpGetBodyRequiredFeature(mpBodyAtPlace(data->carousel.value)))) {
+ 			return 1;
+ 		}
+ 		break;
+@@ -998,7 +1031,7 @@ MenuItemHandlerResult mpCharacterBodyMenuHandler(s32 operation, struct menuitem
+ 		break;
+ #endif
+ 	case MENUOP_GETSELECTEDINDEX:
+-		data->carousel.value = mpbodynum;
++		data->carousel.value = mpPlaceOfBody(mpbodynum);
+ 		break;
+ 	case MENUOP_SET:
+ 	case MENUOP_CHECKPREFOCUSED:
+@@ -1042,10 +1075,10 @@ MenuItemHandlerResult menuhandlerMpCharacterBody(s32 operation, struct menuitem
+ 			if (!data->carousel.unk04)
+ #endif
+ 			{
+-				g_PlayerConfigsArray[g_MpPlayerNum].base.mpheadnum = mpGetMpheadnumByMpbodynum(data->carousel.value);
++				g_PlayerConfigsArray[g_MpPlayerNum].base.mpheadnum = mpGetMpheadnumByMpbodynum(mpBodyAtPlace(data->carousel.value));
+ 			}
+ 		}
+-		g_PlayerConfigsArray[g_MpPlayerNum].base.mpbodynum = data->carousel.value;
++		g_PlayerConfigsArray[g_MpPlayerNum].base.mpbodynum = mpBodyAtPlace(data->carousel.value);
+ 		func0f17b8f0();
+ 		break;
+ 	case MENUOP_CHECKPREFOCUSED:
+@@ -3538,7 +3571,7 @@ MenuItemHandlerResult menuhandlerMpSimulantHead(s32 operation, struct menuitem *
+ MenuItemHandlerResult menuhandlerMpSimulantBody(s32 operation, struct menuitem *item, union handlerdata *data)
+ {
+ 	if (operation == MENUOP_SET) {
+-		g_BotConfigsArray[g_Menus[g_MpPlayerNum].mpsetup.slotindex].base.mpbodynum = data->carousel.value;
++		g_BotConfigsArray[g_Menus[g_MpPlayerNum].mpsetup.slotindex].base.mpbodynum = mpBodyAtPlace(data->carousel.value);
+ 	}
+ 
+ 	return mpCharacterBodyMenuHandler(operation, item, data,
+@@ -7425,6 +7458,17 @@ void mpSetGexPlusMode(bool on)
+ 		// the setup's scenario and options as GoldenEye's scenario has them
+ 		gexPlusSetScenario(gexPlusGetScenario());
+ 
++		// onto one of GoldenEye's arenas, unless one is already chosen (or a
++		// random one, which mpChooseRandomStage() keeps to GoldenEye's)
++		if (g_MpSetup.stagenum != STAGE_MP_RANDOM && !modloaderStageInGexPlusList(g_MpSetup.stagenum)) {
++			for (s32 i = 0; i < mpGetNumStages(); i++) {
++				if (modloaderStageInGexPlusList(g_MpArenas[i].stagenum) && challengeIsFeatureUnlocked(g_MpArenas[i].requirefeature)) {
++					g_MpSetup.stagenum = g_MpArenas[i].stagenum;
++					break;
++				}
++			}
++		}
++
+ 		// (or the GoldenEye ROM hack's whose arenas it is: g_GexPlusVariant)
+ 		g_CombatSimulatorMenuDialog.title = (uintptr_t)(g_GexPlusVariant ? g_GexPlusVariant : "GoldenEye");
+ 		g_CombatSimulatorMenuDialog.flags |= MENUDIALOGFLAG_LITERAL_TEXT;
 diff --git a/src/game/music.c b/src/game/music.c
 index 1848e846c..8db8bf79d 100644
 --- a/src/game/music.c
