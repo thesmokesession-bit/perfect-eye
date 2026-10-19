@@ -1112,6 +1112,18 @@ index 981fef3c0..8626e07d8 100644
  #ifdef __cplusplus
  }
  #endif
+diff --git a/port/include/texpack.h b/port/include/texpack.h
+index b7e918e4a..f954015b6 100644
+--- a/port/include/texpack.h
++++ b/port/include/texpack.h
+@@ -182,6 +182,7 @@ s32 texpackGetNumTexelMatched(void);
+  * below it, so the menu stays alive while it runs.
+  */
+ s32 texpackDumpAll(void);
++s32 texpackDumpConversionRaw(s32 moddir, const char *outdir);
+ s32 texpackDumpOpen(void);
+ s32 texpackDumpTextureNum(s32 n);
+ void texpackDumpClose(void);
 diff --git a/port/include/video.h b/port/include/video.h
 index 4fad217b1..052e9ba9d 100644
 --- a/port/include/video.h
@@ -1137,6 +1149,30 @@ index 4fad217b1..052e9ba9d 100644
 +#endif
 +
  #endif
+diff --git a/port/src/assetdump.c b/port/src/assetdump.c
+index 54f43fba4..50fabf574 100644
+--- a/port/src/assetdump.c
++++ b/port/src/assetdump.c
+@@ -2311,6 +2311,19 @@ const char *assetDumpGetStatus(void)
+ 
+ void assetDumpFromCommandLine(void)
+ {
++	// --dump-ge-raw DIR: GoldenEye's converted textures' raw texels into DIR,
++	// for riceconvert.py to match a GoldenEye emulator pack against
++	if (sysArgGetString("--dump-ge-raw")) {
++		const s32 dir = modloaderGexPlusDirIndex();
++
++		if (dir < 0) {
++			sysLogPrintf(LOG_ERROR, "texpack: --dump-ge-raw: GoldenEye's conversion is not mounted");
++			exit(1);
++		}
++
++		exit(texpackDumpConversionRaw(dir, sysArgGetString("--dump-ge-raw")) > 0 ? 0 : 1);
++	}
++
+ 	if (!sysArgCheck("--dump-assets") && !sysArgCheck("--dump-textures")) {
+ 		return;
+ 	}
 diff --git a/port/src/audio.c b/port/src/audio.c
 index 616f6effc..a423cef7b 100644
 --- a/port/src/audio.c
@@ -4011,10 +4047,18 @@ index fffbe04b9..43ce89a7d 100644
  #else
  	static uintptr_t pagesize;
 diff --git a/port/src/texpack.c b/port/src/texpack.c
-index 0d3cce18c..76ff84e3c 100644
+index 0d3cce18c..e4a212db1 100644
 --- a/port/src/texpack.c
 +++ b/port/src/texpack.c
-@@ -496,7 +496,11 @@ static struct texpackkept *kept; // TEXPACK_KEPT_SLOTS entries, allocated on fir
+@@ -38,6 +38,7 @@
+ #include "texpack.h"
+ #include "modelpack.h"
+ #include "modloader.h"
++#include "mod.h"
+ #include "gexplusrom.h"
+ #include "video.h"
+ #include "versioninfo.h"
+@@ -496,7 +497,11 @@ static struct texpackkept *kept; // TEXPACK_KEPT_SLOTS entries, allocated on fir
  static u32 keptBytes;
  static u32 keptUseSerial;
  static s32 keptCount;
@@ -4026,7 +4070,7 @@ index 0d3cce18c..76ff84e3c 100644
  static u32 keptHits;     // claims answered from the store, i.e. decodes not repeated
  static u32 keptEvicted;  // images the budget threw out
  
-@@ -2981,6 +2985,20 @@ static void texpackScan(void)
+@@ -2981,6 +2986,20 @@ static void texpackScan(void)
  		texpackScanDir(fsGetModDirAt(i));
  	}
  
@@ -4047,7 +4091,7 @@ index 0d3cce18c..76ff84e3c 100644
  	{
  		// Last, so the pack the player chose in the menu wins over any
  		// textures/ a mod happens to ship. One scan covers both layouts -
-@@ -3228,6 +3246,24 @@ static const char **texpackIndexForArt(const struct texpackslot *slot, s32 *outi
+@@ -3228,6 +3247,24 @@ static const char **texpackIndexForArt(const struct texpackslot *slot, s32 *outi
   * upside down on screen, and its artists have always edited them that way. Such
   * a file is already in the order wanted and must be left alone.
   */
@@ -4072,7 +4116,7 @@ index 0d3cce18c..76ff84e3c 100644
  static u8 *texpackLoadImage(const char *path, s32 flip, s32 *outWidth, s32 *outHeight)
  {
  	s32 width;
-@@ -3596,6 +3632,15 @@ static struct texpackjob jobs[TEXPACK_MAX_PENDING];
+@@ -3596,6 +3633,15 @@ static struct texpackjob jobs[TEXPACK_MAX_PENDING];
  static SDL_mutex *jobLock;
  static SDL_cond *jobWake;
  static SDL_Thread *jobThread;
@@ -4088,7 +4132,7 @@ index 0d3cce18c..76ff84e3c 100644
  static s32 jobThreadRun;
  static u32 jobSerial;
  static u32 jobReadyBytes;
-@@ -3674,7 +3719,7 @@ static void texpackEnqueue(s32 slot, s32 texturenum)
+@@ -3674,7 +3720,7 @@ static void texpackEnqueue(s32 slot, s32 texturenum)
  	jobs[slot].texturenum = texturenum;
  	jobs[slot].serial = ++jobSerial;
  	jobs[slot].reported = 0;
@@ -4097,7 +4141,7 @@ index 0d3cce18c..76ff84e3c 100644
  }
  
  static void texpackBacklogAdd(s32 texturenum)
-@@ -3869,6 +3914,10 @@ static void texpackAsyncStart(void)
+@@ -3869,6 +3915,10 @@ static void texpackAsyncStart(void)
  	jobThreadRun = 1;
  	jobThread = SDL_CreateThread(texpackDecodeWorker, "pd-texpack", NULL);
  
@@ -4108,7 +4152,7 @@ index 0d3cce18c..76ff84e3c 100644
  	if (!jobThread) {
  		// Not fatal: without the thread every request simply misses forever and
  		// the game draws its own textures, which is what no pack at all does.
-@@ -3928,6 +3977,13 @@ void texpackAsyncShutdown(void)
+@@ -3928,6 +3978,13 @@ void texpackAsyncShutdown(void)
  
  	SDL_WaitThread(jobThread, NULL);
  	jobThread = NULL;
@@ -4122,7 +4166,7 @@ index 0d3cce18c..76ff84e3c 100644
  }
  
  /**
-@@ -4170,7 +4226,7 @@ s32 texpackPollDecoded(s32 *out, s32 max)
+@@ -4170,7 +4227,7 @@ s32 texpackPollDecoded(s32 *out, s32 max)
  
  	// A worker held back by the ready budget waits for exactly this.
  	if (jobReadyBytes <= TEXPACK_READY_BUDGET) {
@@ -4131,6 +4175,102 @@ index 0d3cce18c..76ff84e3c 100644
  	}
  
  	SDL_UnlockMutex(jobLock);
+@@ -5734,6 +5791,95 @@ void texpackDumpClose(void)
+ 			dumpAllCount, NUM_TEXTURES, dumpDir);
+ }
+ 
++/**
++ * A conversion's textures (moddir, a mounted dir: GoldenEye's) as Dump All
++ * writes the stock ones - raw texels, palettes and the twelve-column
++ * manifest - into outdir, so tools/texpack/riceconvert.py can match an
++ * emulator pack of the original game against them (--dump-ge-raw,
++ * assetdump.c). Numbers to TEXPACK_MOD_TEXTURES, each read from the
++ * conversion's own textures/ and none from the ROM. The count written.
++ */
++s32 texpackDumpConversionRaw(s32 moddir, const char *outdir)
++{
++	char path[FS_MAXPATH + 1];
++	struct texpool pool;
++	FILE *manifest;
++	u8 *buffer;
++	s32 count = 0;
++	const s32 prev = modSetTextureSourceMod(moddir);
++
++	buffer = malloc(TEXPACK_DUMPALL_POOL);
++	snprintf(path, sizeof(path), "%s/manifest.csv", outdir);
++	manifest = buffer ? fopen(path, "wb") : NULL;
++
++	if (!manifest) {
++		sysLogPrintf(LOG_ERROR, "texpack: could not write %s", path);
++		free(buffer);
++		modSetTextureSourceMod(prev);
++		return 0;
++	}
++
++	fprintf(manifest, "texnum,fmt,siz,tilewidth,tileheight,linesize,size,palidx,numlods,hasloddata,lutmode,numcolours\n");
++
++	for (s32 n = 0; n < TEXPACK_MOD_TEXTURES; n++) {
++		struct tex *tex;
++		s32 wide;
++		s32 size;
++		FILE *f;
++
++		if (!modTextureExists(n)) {
++			continue;
++		}
++
++		texInitPool(&pool, buffer, TEXPACK_DUMPALL_POOL);
++		texLoadFromTextureNum(n, &pool);
++		tex = texFindInPool(n, &pool);
++
++		if (tex && tex->data) {
++			wide = tex->depth == G_IM_SIZ_32b ? 2 : 1;
++			size = texGetSizeInBytes(tex, 0) * 8 * wide;
++
++			if (size > 0) {
++				fprintf(manifest, "%04x,%u,%u,%d,%d,%d,%d,0,%u,%u,%u,%u\n", n, tex->gbiformat, tex->depth,
++						texGetWidthAtLod(tex, 0), texGetHeightAtLod(tex, 0),
++						texGetLineSizeInBytes(tex, 0) * 8 * wide, size, tex->numlods, tex->hasloddata,
++						tex->lutmodeindex, tex->unk0a + 1);
++
++				snprintf(path, sizeof(path), "%s/%04x.raw", outdir, n);
++
++				if ((f = fopen(path, "wb"))) {
++					fwrite(tex->data, 1, size, f);
++					fclose(f);
++				}
++
++				if (tex->lutmodeindex) {
++					s32 depth;
++					s32 len;
++
++					texGetDepthAndSize(tex, &depth, &len);
++					snprintf(path, sizeof(path), "%s/%04x.pal", outdir, n);
++
++					if ((f = fopen(path, "wb"))) {
++						fwrite(tex->data + len * 2, 2, tex->unk0a + 1, f);
++						fclose(f);
++					}
++				}
++
++				count++;
++			}
++		}
++
++		texpackForgetRange(buffer, buffer + TEXPACK_DUMPALL_POOL);
++	}
++
++	fclose(manifest);
++	free(buffer);
++	modSetTextureSourceMod(prev);
++	sysLogPrintf(LOG_NOTE, "texpack: wrote raw data for %d of the conversion's textures to %s", count, outdir);
++
++	return count;
++}
++
+ s32 texpackDumpAll(void)
+ {
+ 	s32 n;
 diff --git a/port/src/update.c b/port/src/update.c
 index b32b6b917..4879cfd9a 100644
 --- a/port/src/update.c
