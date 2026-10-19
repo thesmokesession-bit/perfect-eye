@@ -72,8 +72,15 @@ screen keeps its own copy of each tile's art, which `ps5-push.command` refreshes
 A texture pack goes in `texture-packs/` in the title folder, as a folder. Pick or turn off packs
 under **Options → Extended Options → Texture Packs**.
 
-- **Perfect Dark:** **PD Forever Plus HD** (Retro Foundry) for the N64 look. The page's
-  **Community Packs** button downloads it straight to the console.
+- **Perfect Dark, the Xbox 360 remaster:** your own copy of the 2010 Xbox Live Arcade release
+  of Perfect Dark gives the game that release's HD models, textures, rooms, font and explosions.
+  Put its package in `PPSA64007/added-content/`: the file as it comes off an Xbox 360 (a
+  42-character name like `4287CC74...`), or an archive named `Perfect Dark XBLA.7z` or
+  `Perfect Dark XBLA.zip`. Then turn on **Xbox 360 Look** on the PS5 Settings page (Extended
+  Options → PS5). Not included here: it's game data, like the ROMs.
+- **Perfect Dark, the N64 look:** **PD Forever Plus HD** (Retro Foundry). The Texture Packs
+  page's **Community Packs** button downloads it straight to the console. Its **Ultimate** and
+  **XBLA** packs go on top of the Xbox 360 release, so they need that package too.
 - **GoldenEye:** download `GoldenEye-007-HD-PerfectEye.zip` from the release and unzip it into
   `PPSA64008/texture-packs/`. It is [GoldenEye 007 HD](https://github.com/GhostlyDark/GoldenEye-007-HD)
   by intermissionfb (font textures by GhostlyDark), converted to this game's texture numbers and
@@ -103,7 +110,7 @@ under **Options → Extended Options → Texture Packs**.
 - **Get Mods and Maps** under **Perfect Dark Mods**: downloads mods and Combat Simulator maps
   straight into `mods/`. The list is `assets/mod-catalogue.txt`, read from the `ps5-dev` release.
 - **Xbox 360 Look** on the PS5 Settings page: the Xbox Live Arcade release's models, textures and
-  rooms, once your own copy of its package is in `added-content/`.
+  rooms, once your own copy of its package is in `added-content/` (see [HD textures](#hd-textures)).
 - **Faster HD texture loading:** four decode threads and a 1.5 GB store of decoded textures
   (`Mod.TexturePackCacheMB`).
 - **A shader cache** built on a PC (`vulkan-shaders.bin`), so the first visit to each level
