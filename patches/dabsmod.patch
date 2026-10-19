@@ -3575,6 +3575,42 @@ index c927e5ead..2c21202fb 100644
  		gdl = lobbyTitleLine(gdl, room->sum.name, tail, tx, &y, inner, normal);
  	} else {
  		snprintf(tail, sizeof(tail), " (1/%d)", s_Create.maxhumans);
+diff --git a/port/src/netprofile.c b/port/src/netprofile.c
+index e743746e0..508a3dfbd 100644
+--- a/port/src/netprofile.c
++++ b/port/src/netprofile.c
+@@ -13,6 +13,7 @@
+ #include "config.h"
+ #include "net/netlobby.h"
+ #include "netprofile.h"
++#include "langpack.h"
+ 
+ /*
+  * The online player profile (the owner, F3 20261012-115801: "option to copy
+@@ -186,6 +187,11 @@ static char *netProfileTextName(struct menuitem *item)
+ 	return name;
+ }
+ 
++static char *netProfileTextNameLabel(struct menuitem *item)
++{
++	return (char *)langTr("Name\n");
++}
++
+ static MenuItemHandlerResult handlerProfileName(s32 operation, struct menuitem *item, union handlerdata *data)
+ {
+ 	if (operation == MENUOP_CHECKDISABLED) {
+@@ -249,7 +255,10 @@ static MenuDialogHandlerResult dialogProfile(s32 operation, struct menudialogdef
+ }
+ 
+ static struct menuitem s_ProfileItems[] = {
+-	{ MENUITEMTYPE_SELECTABLE, 0, MENUITEMFLAG_LITERAL_TEXT, (uintptr_t)"Name\n", (uintptr_t)&netProfileTextName, handlerProfileName },
++	// not MENUITEMFLAG_LITERAL_TEXT: with it the row's size takes param3 for a
++	// string too (menu.c), and reads netProfileTextName()'s code as one - on
++	// the PS5, whose code cannot be read, the game ended as the page opened
++	{ MENUITEMTYPE_SELECTABLE, 0, 0, (uintptr_t)&netProfileTextNameLabel, (uintptr_t)&netProfileTextName, handlerProfileName },
+ 	{ MENUITEMTYPE_LABEL, 0, MENUITEMFLAG_LITERAL_TEXT | MENUITEMFLAG_LESSLEFTPADDING | MENUITEMFLAG_SMALLFONT, (uintptr_t)"Online you play as your account,\nset on Name Entry.\n", 0, NULL },
+ 	{ MENUITEMTYPE_SELECTABLE, 0, MENUITEMFLAG_SELECTABLE_OPENSDIALOG, L_MPMENU_031, 0, (void *)&g_MpCharacterMenuDialog }, // "Character"
+ 	{ MENUITEMTYPE_SELECTABLE, 0, MENUITEMFLAG_SELECTABLE_OPENSDIALOG, L_MPMENU_033, 0, (void *)&g_MpControlMenuDialog }, // "Control"
 diff --git a/port/src/optionsmenu.c b/port/src/optionsmenu.c
 index 76cceaa09..9c3a6cb11 100644
 --- a/port/src/optionsmenu.c
