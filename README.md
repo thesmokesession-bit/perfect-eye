@@ -106,7 +106,8 @@ under **Options → Extended Options → Texture Packs**.
 - **Quality and Performance:** Quality draws at the TV's full resolution at 60 fps; Performance
   draws at two thirds of it, sharpened with FSR 1. `Video.PS5DisplayMode` (0 or 1).
 - **A settings page at the first start** with the display mode, texture pack, gyro and adaptive
-  triggers. It is **Extended Options → PS5** afterwards.
+  triggers. It is **Extended Options → PS5** afterwards on the Perfect Dark tile, and
+  **EXTRA → PS5 Settings** on the GoldenEye tile.
 - **Gyro aiming** on every DualSense, in split-screen too. `Input.PS5Gyro=0` turns it off,
   `Input.PS5GyroSpeed` (0.1 to 5) sets the speed.
 - **Adaptive triggers:** R2 feels like the gun in hand (a clean break for pistols, a heavy pull

@@ -1735,7 +1735,7 @@ index cc7420715..1d6b3cdef 100644
  		return tile;
  	}
 diff --git a/port/src/gexfront.c b/port/src/gexfront.c
-index f68bccb8f..38153ad5f 100644
+index f68bccb8f..fbde2e0be 100644
 --- a/port/src/gexfront.c
 +++ b/port/src/gexfront.c
 @@ -258,6 +258,12 @@ enum { SCREEN_MODE, SCREEN_MPOPTIONS, SCREEN_LEVEL, SCREEN_SCENARIO, SCREEN_HEAL
@@ -1751,7 +1751,17 @@ index f68bccb8f..38153ad5f 100644
  /**
   * GoldenEye's mission folder (front.c's mission_folder_setup_entries): its nine
   * chapter headings and, under each, its missions, in the order the folder gives
-@@ -1856,6 +1862,39 @@ static void frontBuildCharacters(void)
+@@ -1591,7 +1597,8 @@ static s32 frontMusic(void)
+ 
+ s32 gexFrontMusic(void)
+ {
+-	return g_Front.active && g_Front.loaded ? frontMusic() : -1;
++	// the tile's Perfect Menu pages (online, PS5 Settings) keep the folder tune
++	return (g_Front.active && g_Front.loaded) || gexFrontTileTheme() ? frontMusic() : -1;
+ }
+ 
+ /* ---- the stages --------------------------------------------------------- */
+@@ -1856,6 +1863,39 @@ static void frontBuildCharacters(void)
  	}
  }
  
@@ -1791,7 +1801,64 @@ index f68bccb8f..38153ad5f 100644
  /* ---- the setup ---------------------------------------------------------- */
  
  // GoldenEye's scenarios in its own order, as the remake's
-@@ -3914,6 +3953,23 @@ static void frontTickScreen(void)
+@@ -2612,9 +2652,21 @@ static void frontSetCursorForMission(s32 mission);
+ static s32 frontMissionUnderCursor(void);
+ static void frontOpenExtra(s32 row);
+ 
+-#define NUM_EXTRA_ROWS 2
++#define NUM_EXTRA_ROWS 3
+ #define EXTRA_CINEMA   0
+ #define EXTRA_MONITORS 1
++#define EXTRA_SETTINGS 2 // the GoldenEye tile's: the PS5 settings page (gyro, triggers, display...)
++
++static s32 frontExtraRows(void)
++{
++#if defined(PLATFORM_PS5) || defined(PD_TILE_TEST)
++	if (g_Ps5GoldenEyeTile) {
++		return 3;
++	}
++#endif
++
++	return 2;
++}
+ 
+ // What a row of the Cinema's second page is: GECINEMA_OPENING and
+ // GECINEMA_ENDING, then these
+@@ -2934,7 +2986,8 @@ static void frontOpenMonitors(void)
+ static void frontTickExtra(s32 pick, s32 back)
+ {
+ 	if (!g_Front.tabprev) {
+-		g_Front.highlight = g_Front.cursory >= 211 ? EXTRA_MONITORS : EXTRA_CINEMA;
++		g_Front.highlight = g_Front.cursory >= 241 && frontExtraRows() > EXTRA_SETTINGS ? EXTRA_SETTINGS
++			: g_Front.cursory >= 211 ? EXTRA_MONITORS : EXTRA_CINEMA;
+ 	}
+ 
+ 	if (back || (pick && g_Front.tabprev)) {
+@@ -2951,6 +3004,23 @@ static void frontTickExtra(s32 pick, s32 back)
+ 		frontSfx(GESFX_DOOR_METAL_CLOSE2, MENUSOUND_SELECT);
+ 		frontOpenMonitors();
+ 	}
++#if defined(PLATFORM_PS5) || defined(PD_TILE_TEST)
++	else if (pick && g_Front.highlight == EXTRA_SETTINGS) {
++		// Perfect Dark's settings page, in GoldenEye's colours on the tile
++		// (menu.c), over the Perfect Menu the folder is shut over; closing it
++		// opens the folder again (mainmenu.c), as Back from ONLINE does
++#ifdef PLATFORM_PS5
++		extern struct menudialogdef g_Ps5SetupMenuDialog;
++		struct menudialogdef *page = &g_Ps5SetupMenuDialog;
++#else
++		extern struct menudialogdef g_ExtendedStickMenuDialog;
++		struct menudialogdef *page = &g_ExtendedStickMenuDialog; // the desktop test's stand-in
++#endif
++		frontSfx(GESFX_DOOR_METAL_CLOSE2, MENUSOUND_SELECT);
++		frontClose();
++		menuPushDialog(page);
++	}
++#endif
+ }
+ 
+ /**
+@@ -3914,6 +3984,23 @@ static void frontTickScreen(void)
  			g_Front.highlight = g_Front.cursory >= 275.0f ? 2 : g_Front.cursory >= 243.0f ? 1 : 0;
  		}
  
@@ -1815,7 +1882,7 @@ index f68bccb8f..38153ad5f 100644
  		if (back || (pick && g_Front.tabprev)) {
  			frontSfx(GESFX_DOOR_METAL_CLOSE2, MENUSOUND_TOGGLEOFF);
  			frontClose();
-@@ -3975,6 +4031,66 @@ s32 gexFrontIsActive(void)
+@@ -3975,6 +4062,66 @@ s32 gexFrontIsActive(void)
  	return g_Front.active;
  }
  
@@ -1882,7 +1949,7 @@ index f68bccb8f..38153ad5f 100644
  s32 gexFrontOpen(void)
  {
  	g_FrontLeaving = 0;
-@@ -5580,9 +5696,23 @@ void gexFrontTextWrap(s32 gothic, const char *text, char *out, size_t len, s32 w
+@@ -5580,9 +5727,23 @@ void gexFrontTextWrap(s32 gothic, const char *text, char *out, size_t len, s32 w
  }
  
  /** frontAddStartTabText() and frontAddPreviousTabText(): Bank Gothic, turned, a tab's middle. */
@@ -1906,7 +1973,7 @@ index f68bccb8f..38153ad5f 100644
  	s32 width;
  	s32 height;
  	s32 v;
-@@ -5980,8 +6110,11 @@ static void frontWidenBackdrop(void)
+@@ -5980,8 +6141,11 @@ static void frontWidenBackdrop(void)
   */
  static Gfx *frontDrawReleaseBackdrop(Gfx *gdl)
  {
@@ -1919,6 +1986,24 @@ index f68bccb8f..38153ad5f 100644
  	if (!tile) {
  		return gdl;
  	}
+@@ -6815,7 +6979,7 @@ static Gfx *frontDrawMission(Gfx *gdl)
+ /** EXTRA: the difficulty page's rows again, with no mission over them. */
+ static Gfx *frontDrawExtra(Gfx *gdl)
+ {
+-	static const char *rows[NUM_EXTRA_ROWS] = { LANG_N("Cinema\n"), LANG_N("Monitor Programs\n") };
++	static const char *rows[NUM_EXTRA_ROWS] = { LANG_N("Cinema\n"), LANG_N("Monitor Programs\n"), LANG_N("PS5 Settings\n") };
+ 
+ 	gdl = frontPrint(gdl, 0x37, 0x8f, langTr("EXTRA:\n"), COLOUR_ON);
+ 
+@@ -6824,7 +6988,7 @@ static Gfx *frontDrawExtra(Gfx *gdl)
+ 		gdl = frontTextSetup(gdl);
+ 	}
+ 
+-	for (s32 i = 0; i < NUM_EXTRA_ROWS; i++) {
++	for (s32 i = 0; i < frontExtraRows(); i++) {
+ 		char num[8];
+ 
+ 		snprintf(num, sizeof(num), "%d.\n", i + 1);
 diff --git a/port/src/gexplusrom.c b/port/src/gexplusrom.c
 index 1907f81fe..ebb17da0d 100644
 --- a/port/src/gexplusrom.c

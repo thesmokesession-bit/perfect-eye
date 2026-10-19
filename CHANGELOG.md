@@ -6,6 +6,11 @@
   GoldenEye uses its HD levels, characters, guns, props, skies and folder screens.
 - The game unpacks the Xbox 360 package itself, as it comes off the console, the first time it
   starts. No tools needed on your computer.
+- **PS5 Settings on the GoldenEye tile:** EXTRA on GoldenEye's mode select has a third row,
+  PS5 Settings (gyro, adaptive triggers, display mode, texture pack and the rest). Done goes back
+  to the folder.
+- The GoldenEye tile's online pages and settings page play GoldenEye's folder music instead of
+  Perfect Dark's menu music.
 
 ## 1.0.0 (2026-10-19)
 
