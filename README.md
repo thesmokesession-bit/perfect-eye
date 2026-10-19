@@ -60,8 +60,12 @@ screen keeps its own copy of each tile's art, which `ps5-push.command` refreshes
 
 ## Updating
 
-- **From the game:** **Check for Updates** on the Perfect Menu fetches the newest PS5 build from
-  this repo's `ps5-dev` release. Quit and start the game again from the home screen to run it.
+- **From the game (1.2.0 and later):** when a new version is out, an **Update Available** box comes
+  up on the first screen (Choose Your Reality on Perfect Dark, the mode select on GoldenEye).
+  **Update Now** downloads it, installs it and restarts the game. On Perfect Dark, **Check for
+  Updates** on the Perfect Menu does the same by hand.
+- **From 1.0.0 or 1.1.0:** update from your computer once. Their in-game updater can freeze the
+  game.
 - **From your computer:** download the new release and run `ps5-push.command` again. It sends the
   game's own files and anything new, and never touches your saves or settings.
 

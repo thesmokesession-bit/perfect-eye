@@ -1,6 +1,10 @@
 # Update notes
 
-## 1.2.0 (unreleased)
+## 1.2.0 (2026-10-19)
+
+**From 1.0.0 or 1.1.0, install this one from your computer** (`ps5-push.command` or FTP): the
+updater in those versions can freeze the game. From 1.2.0 on, updates install from the game.
+
 
 - **Updates offered as the game starts.** When a newer release is out, an Update Available box
   comes up on the first screen: Perfect Dark's Choose Your Reality, or GoldenEye's folder.
