@@ -11,8 +11,9 @@ PS5 homebrew, with GoldenEye 007 on a home screen tile of its own.
   own resolution (3840x2160 on a 4K set).
 - **Online with PC players.** Dab's Mod's lobby: rooms, room codes, co-op, counter-op, kill cam,
   match summaries. A PS5 and a PC on the same build play together.
-- **HD for both games:** Perfect Dark's Xbox 360 remaster (from your own copy of the release),
-  HD texture packs for Perfect Dark, and GoldenEye 007 HD (see [HD textures](#hd-textures)).
+- **HD for both games:** each game's Xbox 360 version, from your own copy (see
+  [The Xbox 360 versions](#the-xbox-360-versions-optional)), and HD texture packs for both (see
+  [HD textures](#hd-textures)).
 
 You need your own ROMs. This project ships no game data.
 
@@ -29,12 +30,9 @@ players use the Dab's Mod dev build of that commit.
   (md5 of the `.z64`: `e03b088b6ac9e0080440efed07c1e40f`).
 - For the GoldenEye tile, also a **GoldenEye 007 (USA)** ROM. The GoldenEye tile runs on the
   Perfect Dark engine, so its folder needs both ROMs.
-- Optional, for GoldenEye in HD: your own copy of **GoldenEye 007 for the Xbox 360** (the XBLA
-  version). It goes on top of the GoldenEye ROM and gives GoldenEye that version's HD levels,
-  characters, guns, props, skies and menus.
-- Optional, for Perfect Dark in HD: your own copy of the **Xbox 360 (XBLA) release** of Perfect
-  Dark. It goes on top of the N64 ROM, which the game still needs, and gives Perfect Dark the Xbox
-  360 version's HD models and textures (see [HD textures](#hd-textures)).
+- Optional: your own copy of the **Xbox 360 (XBLA) version** of either game, for its HD look. It
+  goes on top of the N64 ROM, which the game still needs. Where each one goes is in
+  [The Xbox 360 versions](#the-xbox-360-versions-optional).
 
 ## Installing
 
@@ -48,6 +46,8 @@ players use the Dab's Mod dev build of that commit.
      and Open). It asks for the PS5's address and FTP port once (the ones your FTP server
      shows) and sends everything.
    - **Any FTP client works too:** copy `PPSA64007` and `PPSA64008` into `/data/homebrew/`.
+   - Optional: the Xbox 360 versions go in each title's `added-content/` folder first, see
+     [below](#the-xbox-360-versions-optional).
 4. Let your installer register the titles, then start Perfect Dark or GoldenEye from the home
    screen.
 
@@ -78,25 +78,48 @@ screen keeps its own copy of each tile's art, which `ps5-push.command` refreshes
   first (Bond first). Perfect Dark's characters are still there after them. Back returns to the
   GoldenEye folder.
 
+## The Xbox 360 versions (optional)
+
+Each tile has an `added-content/` folder. Your own copy of that game's Xbox 360 (XBLA) version
+goes in it, and the N64 ROM stays where it is: the game needs both.
+
+```
+/data/homebrew/
+├── PPSA64007/                  Perfect Dark
+│   └── added-content/
+│       └── 4287CC74C591DB37B577DAEA43BB6E51692D7A8E58    Perfect Dark's Xbox 360 package
+└── PPSA64008/                  GoldenEye 007
+    └── added-content/
+        └── 584108A9/           GoldenEye's Xbox 360 package folder, as it comes off the console
+```
+
+- **GoldenEye 007 (Xbox 360) → `PPSA64008/added-content/`.** Any of these works:
+  - the package as it comes off an Xbox 360: the `584108A9` folder, or the file inside it (the
+    game finds it up to five folders down, so the whole `Content` folder works too). The first
+    start unpacks it into `added-content/GoldenEye 007 XBLA/`, which takes about a minute;
+  - that unpacked folder itself (the one holding `default.xex` and `files/`);
+  - a `.7z` or `.zip` of that folder.
+
+  GoldenEye then uses that version's HD levels, characters, guns, props, skies and folder screens.
+- **Perfect Dark (Xbox 360) → `PPSA64007/added-content/`.** The package file as it comes off an
+  Xbox 360 (a 42-character name starting `4287CC74`), or an archive named `Perfect Dark XBLA.7z`
+  or `Perfect Dark XBLA.zip`. Then turn on **Xbox 360 Look** on the PS5 Settings page (Extended
+  Options → PS5). Perfect Dark gets that release's HD models, textures, rooms, font and explosions.
+
+Not included here: they're game data, like the ROMs.
+
 ## HD textures
 
 A texture pack goes in `texture-packs/` in the title folder, as a folder. Pick or turn off packs
 under **Options → Extended Options → Texture Packs**.
 
-- **Perfect Dark, the Xbox 360 remaster:** your own copy of the 2010 Xbox Live Arcade release
-  of Perfect Dark gives the game that release's HD models, textures, rooms, font and explosions.
-  Put its package in `PPSA64007/added-content/`: the file as it comes off an Xbox 360 (a
-  42-character name like `4287CC74...`), or an archive named `Perfect Dark XBLA.7z` or
-  `Perfect Dark XBLA.zip`. Then turn on **Xbox 360 Look** on the PS5 Settings page (Extended
-  Options → PS5). Not included here: it's game data, like the ROMs.
+- **Perfect Dark, the Xbox 360 remaster:** see
+  [The Xbox 360 versions](#the-xbox-360-versions-optional).
 - **Perfect Dark, the N64 look:** **PD Forever Plus HD** (Retro Foundry). The Texture Packs
   page's **Community Packs** button downloads it straight to the console. Its **Ultimate** and
   **XBLA** packs go on top of the Xbox 360 release, so they need that package too.
-- **GoldenEye, the Xbox 360 version:** put your own copy in `PPSA64008/added-content/`, any of:
-  the package as it comes off an Xbox 360 (the `584108A9` folder and everything in it; the game
-  unpacks it into `added-content/GoldenEye 007 XBLA/` the first time it starts, about a minute),
-  the folder it unpacks to (the one holding `default.xex` and `files/`), or a `.7z` or `.zip` of
-  that folder. Levels, characters, guns, props, skies and the folder screens then come from it.
+- **GoldenEye, the Xbox 360 version:** see
+  [The Xbox 360 versions](#the-xbox-360-versions-optional).
 - **GoldenEye, texture pack:** download `PerfectEye-GoldenEye-HD-Textures.zip` from the release and unzip it into
   `PPSA64008/texture-packs/`. It is [GoldenEye 007 HD](https://github.com/GhostlyDark/GoldenEye-007-HD)
   by intermissionfb (font textures by GhostlyDark), converted to this game's texture numbers and

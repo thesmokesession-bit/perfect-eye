@@ -13,7 +13,7 @@ build="$root/build-ps5/pd"
 radv="$root/radv/mihawk-vulkan-review"
 
 title() {
-    local id=$1 sys=$2 note=$3
+    local id=$1 sys=$2 note=$3 xbla=$4
     local app="$root/dist/$id"
     rm -rf -- "$app"
     mkdir -p "$app/sce_sys" "$app/sce_module" "$app/data" "$app/texture-packs" "$app/added-content"
@@ -26,6 +26,7 @@ title() {
     # SPIR-V the Vulkan renderer would otherwise compile on first sight (tools/gen-shader-cache.sh)
     [[ -f $root/assets/vulkan-shaders.bin ]] && cp "$root/assets/vulkan-shaders.bin" "$app/vulkan-shaders.bin"
     printf '%s\n' "$note" > "$app/data/PUT YOUR ROM IN THE TITLE FOLDER.txt"
+    printf '%s\n' "$xbla" > "$app/added-content/OPTIONAL - THE XBOX 360 VERSION GOES HERE.txt"
     cp "$root/README.md" "$app/README.md"
     echo "package.sh: $app ($(du -sh "$app" | cut -f1))"
 }
@@ -33,10 +34,16 @@ title() {
 title PPSA64007 "$root/sce_sys" "Copy your Perfect Dark (USA) (Rev 1) ROM (.z64, .n64 or .v64, any file name) into the title
 folder or this folder. The game puts it in place as pd.ntsc-final.z64 the first time it starts.
 A GoldenEye 007 (USA) ROM in the title folder is moved to added-content/ and turned into
-GoldenEye's levels and missions."
+GoldenEye's levels and missions." "Optional: your own copy of Perfect Dark's Xbox 360 (XBLA) version goes in this folder: the
+package file as it comes off an Xbox 360 (a 42-character name starting 4287CC74), or an archive
+named Perfect Dark XBLA.7z or Perfect Dark XBLA.zip. Then turn on Xbox 360 Look under Extended
+Options, PS5. The N64 ROM is still needed."
 title PPSA64008 "$root/sce_sys_ge" "The GoldenEye tile runs inside Perfect Dark, so it needs both ROMs: copy your Perfect Dark
 (USA) (Rev 1) ROM and your GoldenEye 007 (USA) ROM (.z64, .n64 or .v64, any file names) into the
-title folder. The first start puts them in place and converts GoldenEye, then opens it."
+title folder. The first start puts them in place and converts GoldenEye, then opens it." "Optional: your own copy of GoldenEye 007's Xbox 360 (XBLA) version goes in this folder: the
+584108A9 folder as it comes off an Xbox 360 (or the file inside it), the folder it unpacks to
+(the one holding default.xex and files/), or a .7z or .zip of that folder. The first start
+unpacks a package, which takes about a minute. The N64 ROMs are still needed."
 
 # beside the title folders: the Mac's (or any Unix's) wireless install/update and save sync
 cp "$root/tools/ps5-push.command" "$root/tools/ps5-sync-saves.command" "$root/dist/"
