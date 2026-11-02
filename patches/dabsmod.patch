@@ -4281,6 +4281,40 @@ index f51c1b09d..682086544 100644
  		}
  
  		snprintf(extra, sizeof(extra), "victim %s%d attacker %s%d hitpart %d flags %d%s%s",
+diff --git a/port/src/net/nethud.c b/port/src/net/nethud.c
+index cd8c40995..79710b3b1 100644
+--- a/port/src/net/nethud.c
++++ b/port/src/net/nethud.c
+@@ -112,6 +112,7 @@ static s32 s_LiveWas = 0;
+ static u32 s_Frame = 1;
+ static u32 s_LobbyFrame = 0;
+ static u32 s_MainFrame = 0;   // the Briefing Room's last frame up (netHudMainChatFrame)
++static s32 s_PadChatDown = 0; // the pad's Triangle (SDL's Y) held last frame
+ 
+ static char s_ChatKeyName[32] = "T";
+ static char s_PlayersKeyName[32] = "P";
+@@ -529,7 +530,12 @@ void netHudFrame(void)
+ 	const s32 lobby = !live && s_LobbyFrame && s_Frame - s_LobbyFrame <= 2 && netLobbyInRoom();
+ 	// the Briefing Room, and the lobby has the main menu's chat
+ 	const s32 mainchat = !live && !lobby && s_MainFrame && s_Frame - s_MainFrame <= 2 && netLobbyMainChatAvailable() > 0;
++	// Triangle opens the Game Lobby's and the Briefing Room's line for a
++	// player with no keyboard (on the PS5 the system keyboard comes up)
++	const s32 paddown = inputKeyPressed(VK_JOY1_BEGIN + SDL_CONTROLLER_BUTTON_Y + g_MpPlayerNum * INPUT_MAX_CONTROLLER_BUTTONS);
++	const s32 padchat = paddown && !s_PadChatDown && (lobby || mainchat);
+ 
++	s_PadChatDown = paddown;
+ 	s_Frame++;
+ 
+ 	// offline: nothing to read, and the last session's lines went with it.
+@@ -577,7 +583,7 @@ void netHudFrame(void)
+ 		const s32 vk = netHudKey(s_ChatKeyName, &s_ChatVk);
+ 		const s32 space = inputKeyPressedThisFrame(VK_SPACE) && (lobby || mainchat || netHudSpaceFree());
+ 
+-		if ((vk > 0 && inputKeyPressedThisFrame(vk)) || space) {
++		if ((vk > 0 && inputKeyPressedThisFrame(vk)) || space || padchat) {
+ 			netHudChatStart(live ? CHAT_MATCH : lobby ? CHAT_LOBBY : CHAT_MAIN, NULL);
+ 		} else if (lobby && s_TestLobbyType[0]) {
+ 			netHudChatStart(CHAT_LOBBY, s_TestLobbyType);
 diff --git a/port/src/net/netlobby.c b/port/src/net/netlobby.c
 index 22cda3709..54f4f17b2 100644
 --- a/port/src/net/netlobby.c
@@ -4413,7 +4447,7 @@ index 3842267e4..79d52900f 100644
  #include <stdlib.h>
  #include <stdio.h>
 diff --git a/port/src/netlobbymenu.c b/port/src/netlobbymenu.c
-index c927e5ead..2c21202fb 100644
+index c927e5ead..eeda6ed5f 100644
 --- a/port/src/netlobbymenu.c
 +++ b/port/src/netlobbymenu.c
 @@ -2,6 +2,7 @@
@@ -4651,7 +4685,42 @@ index c927e5ead..2c21202fb 100644
  /*
   * Create Room
   */
-@@ -4797,7 +4921,9 @@ static Gfx *lobbyPreviewWindow(Gfx *gdl, struct menudialog *dialog, s32 x1, s32
+@@ -4048,12 +4172,18 @@ static s32 lobbyChatWrap(struct lobbychatline *lines, s32 n, const char *text, s
+  * nethud.c). The newest lines are the ones shown when they are more than
+  * the window holds, unless it is scrolled (s_ChatScroll).
+  */
++#if defined(PLATFORM_PS5) || defined(PD_TILE_TEST)
++#define LOBBY_EMPTY_CHAT "No chat yet: press Triangle to talk."
++#else
++#define LOBBY_EMPTY_CHAT "No chat yet: press Space to talk."
++#endif
++
+ static Gfx *lobbyChatWindow(Gfx *gdl, struct menudialog *dialog, s32 x1, s32 y1, s32 x2, s32 y2)
+ {
+ 	const struct netlobbyroom *room = netLobbyGetRoom();
+ 
+ 	return lobbyChatLines(gdl, dialog, x1, y1, x2, y2, room->chat, room->nchat,
+-			"No chat yet: press Space to talk.", netLobbyMenuStatusText(), LOBBYCHAT_ROOM);
++			LOBBY_EMPTY_CHAT, netLobbyMenuStatusText(), LOBBYCHAT_ROOM);
+ }
+ 
+ /**
+@@ -4239,8 +4369,13 @@ static MenuItemHandlerResult handlerChat(s32 operation, struct menuitem *item, u
+ 		// line Space and T open, a whole chat line long, in the chat window
+ 		// (nethud.c). The on-screen keyboard's seventeen letters were all
+ 		// that row gave (F3 20261012-123906: "small amount of space to
+-		// type"); a pad's press still gets the keyboard
++		// type"); a pad's press still gets the keyboard, but on the PS5 it
++		// gets the line too: the system keyboard types a whole chat line
++#if defined(PLATFORM_PS5) || defined(PD_TILE_TEST)
++		if (isCurrent(&g_NetRoomMenuDialog) && netHudLobbyChatOpen()) {
++#else
+ 		if (isCurrent(&g_NetRoomMenuDialog) && inputLastPressWasKeyboard() && netHudLobbyChatOpen()) {
++#endif
+ 			return 0;
+ 		}
+ 
+@@ -4797,7 +4932,9 @@ static Gfx *lobbyPreviewWindow(Gfx *gdl, struct menudialog *dialog, s32 x1, s32
  	snprintf(preview.sum.host, sizeof(preview.sum.host), "%s", netLobbyAccount());
  
  	if (settings && room->valid) {
@@ -4662,6 +4731,40 @@ index c927e5ead..2c21202fb 100644
  		gdl = lobbyTitleLine(gdl, room->sum.name, tail, tx, &y, inner, normal);
  	} else {
  		snprintf(tail, sizeof(tail), " (1/%d)", s_Create.maxhumans);
+@@ -5552,18 +5689,29 @@ static void lobbyInfoRoom(char *out, s32 size)
+ 	}
+ }
+ 
+-#define LOBBY_HINTS_SELECT "A / Enter: Select     B / Esc: Back"
++#if defined(PLATFORM_PS5) || defined(PD_TILE_TEST)
++// the DualSense's names, and Triangle for the chat (nethud.c)
++#define LOBBY_HINTS_SELECT  "Cross: Select     Circle: Back"
++#define LOBBY_HINTS_BRIEF   "Cross: Join     Create / L2: Players     Triangle: Chat     Circle: Back"
++#define LOBBY_HINTS_ONLINE  "Create / L2: Close     Circle: Back"
++#define LOBBY_HINTS_ROOM    "Cross: Select     Triangle: Chat"
++#else
++#define LOBBY_HINTS_SELECT  "A / Enter: Select     B / Esc: Back"
++#define LOBBY_HINTS_BRIEF   "A / Enter: Join     Select / P: Players     Space or T: Chat     B / Esc: Back"
++#define LOBBY_HINTS_ONLINE  "Select / P: Close     B / Esc: Back"
++#define LOBBY_HINTS_ROOM    "A / Enter: Select     Space or T: Chat"
++#endif
+ 
+ static const struct lobbypage s_LobbyPages[] = {
+ 	{ &g_NetOnlineMenuDialog, 0, lobbyNamePlace, lobbyNamePanels, "NAME ENTRY", NULL, LOBBY_HINTS_SELECT },
+ 	{ &g_NetBriefingMenuDialog, G_ASPECT_LEFT_EXT, lobbyBriefingPlace, lobbyBriefingPanels, "BRIEFING ROOM", lobbyInfoAccount,
+-		"A / Enter: Join     Select / P: Players     Space or T: Chat     B / Esc: Back", briefingFootMessage },
++		LOBBY_HINTS_BRIEF, briefingFootMessage },
+ 	{ &g_NetPlayersOnlineMenuDialog, 0, lobbyOnlinePlace, lobbyOnlinePanels, "PLAYERS ONLINE", lobbyInfoOnline,
+-		"Select / P: Close     B / Esc: Back" },
++		LOBBY_HINTS_ONLINE },
+ 	{ &g_NetCreateMenuDialog, G_ASPECT_LEFT_EXT, lobbyPreviewPlace, lobbyPreviewPanels, "CREATE ROOM", lobbyInfoAccount, LOBBY_HINTS_SELECT },
+ 	{ &g_NetRoomSettingsMenuDialog, G_ASPECT_LEFT_EXT, lobbyPreviewPlace, lobbyPreviewPanels, "ROOM SETTINGS", lobbyInfoRoom, LOBBY_HINTS_SELECT },
+ 	{ &g_NetRoomMenuDialog, G_ASPECT_RIGHT_EXT, lobbyRoomPlace, lobbyRoomPanels, "GAME LOBBY", lobbyInfoRoom,
+-		"A / Enter: Select     Space or T: Chat" },
++		LOBBY_HINTS_ROOM },
+ };
+ 
+ static const struct lobbypage *lobbyPageOf(struct menudialogdef *def)
 diff --git a/port/src/netprofile.c b/port/src/netprofile.c
 index e743746e0..ba503992d 100644
 --- a/port/src/netprofile.c

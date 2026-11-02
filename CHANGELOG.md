@@ -1,5 +1,15 @@
 # Update notes
 
+## Unreleased
+
+- **Chat with a controller.** Triangle opens the chat on the Briefing Room (the Main Menu Chat in the
+  bottom right) and in a room's Game Lobby, in both Perfect Dark and GoldenEye. The PS5's own
+  keyboard comes up, and what you type there is sent when you press OK. The Game Lobby's Chat row
+  opens the same full-length line. Before, the Briefing Room's chat only opened with Space or T on
+  a keyboard.
+- **PS5 button names on the online pages.** The hints at the bottom of the online pages name the
+  DualSense's buttons (Cross, Circle, Triangle, Create, L2) instead of a PC's.
+
 ## 1.3.1 (2026-11-02)
 
 - **GoldenEye's watch says the right thing for LOOK UP/DOWN.** It had UPRIGHT and REVERSE the wrong
