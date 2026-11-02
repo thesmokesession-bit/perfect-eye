@@ -1126,7 +1126,7 @@ index 651f6c31f..2d1cb89a1 100644
  /**
   * The release's own set of one of GoldenEye's two fonts - gothic 0 for Zurich
 diff --git a/port/include/gexfront.h b/port/include/gexfront.h
-index 827edc653..8c146fa4b 100644
+index 827edc653..ea9aa9cbb 100644
 --- a/port/include/gexfront.h
 +++ b/port/include/gexfront.h
 @@ -19,6 +19,10 @@
@@ -1140,6 +1140,20 @@ index 827edc653..8c146fa4b 100644
  // the stick GoldenEye's screens read: the further pushed of a pad's two
  s32 gexMenuStickX(s32 player);
  s32 gexMenuStickY(s32 player);
+@@ -183,4 +187,13 @@ Gfx *gexFrontFillRect(Gfx *gdl, s32 x1, s32 y1, s32 x2, s32 y2, u32 colour);
+ // Text broken into lines no wider than `width`, in GoldenEye's own units
+ void gexFrontTextWrap(s32 gothic, const char *text, char *out, size_t len, s32 width);
+ 
++// GoldenEye's cheats, won by its target times (gexfront.c)
++s32 gexFrontCheatOn(s32 i);
++void gexFrontCheatsReset(void);
++void gexFrontCheatGifts(void);
++f32 gexFrontCheatAnimScale(void);
++#define GECHEAT_PAINTBALL 0
++#define GECHEAT_TURBO     5
++#define GECHEAT_NORADAR   6
++
+ #endif
 diff --git a/port/include/ghostnet.h b/port/include/ghostnet.h
 index 40ca395cb..525cde808 100644
 --- a/port/include/ghostnet.h
@@ -1875,7 +1889,7 @@ index cc7420715..1d6b3cdef 100644
  		return tile;
  	}
 diff --git a/port/src/gexfront.c b/port/src/gexfront.c
-index f68bccb8f..f0d6a2fad 100644
+index f68bccb8f..e29a1e51b 100644
 --- a/port/src/gexfront.c
 +++ b/port/src/gexfront.c
 @@ -77,6 +77,7 @@
@@ -1899,7 +1913,138 @@ index f68bccb8f..f0d6a2fad 100644
  /**
   * GoldenEye's mission folder (front.c's mission_folder_setup_entries): its nine
   * chapter headings and, under each, its missions, in the order the folder gives
-@@ -1591,7 +1598,8 @@ static s32 frontMusic(void)
+@@ -777,6 +784,7 @@ static u16 g_BestTimes[NUM_MISSIONS][NUM_DIFFICULTIES];
+  * The ticks for completed difficulties show either way.
+  */
+ static s32 g_GePlusLockedProgression = 0;
++static s32 g_GePlusCheats = 0; // Mod.GePlusCheats: GoldenEye's cheats switched on, a bit a mission
+ 
+ /**
+  * Mod.GePlusRegion: which of GoldenEye's releases GE Plus plays by - 0 the
+@@ -804,6 +812,7 @@ static s32 g_GePlusRevisionFixes = 1;
+ PD_CONSTRUCTOR static void gexFrontConfigInit(void)
+ {
+ 	configRegisterInt("Mod.GePlusLockedProgression", &g_GePlusLockedProgression, 0, 1);
++	configRegisterInt("Mod.GePlusCheats", &g_GePlusCheats, 0, (1 << NUM_MISSIONS) - 1);
+ 	configRegisterInt("Mod.GePlusRegion", &g_GePlusRegion, 0, GEREGION_COUNT - 1);
+ 	configRegisterInt("Mod.GePlusRevisionFixes", &g_GePlusRevisionFixes, 0, 1);
+ }
+@@ -1328,6 +1337,114 @@ static void frontSaveBestTimes(void)
+ 	fsFileFree(f);
+ }
+ 
++/* ---- GoldenEye's cheats ---------------------------------------------- */
++
++/*
++ * What beating a mission's target time wins (g_TargetTimes, the difficulty it names or a harder
++ * one), in mission order, and how the port gives it: Perfect Dark's own cheat where one does the
++ * same, else a gun at the start or the hooks below (gexFrontCheatOn()). A player asked for them
++ * (2026-11-02): GE Plus had the target times and nothing to win by them. GoldenEye's own only, not
++ * a ROM hack's. Switched on and off on the Cheats page (EXTRA), Mod.GePlusCheats a bit a mission.
++ */
++static const struct { s8 cheat; u8 weapon; u8 pair; } g_GeCheats[NUM_MISSIONS] = {
++	{ -1 },                                       // Dam: Paintball Mode (chrIsUsingPaintball())
++	{ CHEAT_INVINCIBLE },                         // Facility: Invincibility
++	{ CHEAT_DKMODE },                             // Runway: DK Mode
++	{ -1, WEAPON_GE_GRENADELAUNCHER, 1 },         // Surface 1: 2x Grenade Launcher
++	{ -1, WEAPON_GE_ROCKETLAUNCHER, 1 },          // Bunker 1: 2x Rocket Launcher
++	{ -1 },                                       // Silo: Turbo Mode (debugIsTurboModeEnabled())
++	{ -1 },                                       // Frigate: No Radar, multiplayer (radar.c)
++	{ CHEAT_SMALLJO },                            // Surface 2: Tiny Bond
++	{ -1, WEAPON_GE_THROWINGKNIFE, 1 },           // Bunker 2: 2x Throwing Knives
++	{ -1 },                                       // Statue: Fast Animation (gexFrontCheatAnimScale())
++	{ CHEAT_CLOAKINGDEVICE },                     // Archives: Invisibility, as Perfect Dark's cloak
++	{ CHEAT_ENEMYROCKETS },                       // Streets: Enemy Rockets
++	{ -1 },                                       // Depot: Slow Animation (gexFrontCheatAnimScale())
++	{ -1, WEAPON_GE_SILVERPP7, 0 },               // Train: Silver PP7
++	{ -1, WEAPON_GE_HUNTINGKNIFE, 1 },            // Jungle: 2x Hunting Knives
++	{ CHEAT_UNLIMITEDAMMO },                      // Control: Infinite Ammo
++	{ -1, WEAPON_GE_RCP90, 1 },                   // Caverns: 2x RC-P90
++	{ -1, WEAPON_GE_GOLDPP7, 0 },                 // Cradle: Gold PP7
++	{ -1, WEAPON_GE_MOONRAKER, 1 },               // Aztec: 2x Laser
++	{ CHEAT_ALLGUNS },                            // Egyptian: All Guns (GoldenEye's list, inv.c)
++};
++
++/** Whether mission `i`'s cheat has been won: its target time beaten at its difficulty or harder. */
++static s32 frontCheatWon(s32 i)
++{
++	if (frontIsHack() || i < 0 || i >= NUM_MISSIONS) {
++		return 0;
++	}
++
++	frontLoadBestTimes();
++
++	for (s32 col = 0; col < 3; col++) {
++		const s32 target = g_TargetTimes[i][col];
++
++		for (s32 d = col; target && d < NUM_DIFFICULTIES; d++) {
++			if (g_BestTimes[i][d] && g_BestTimes[i][d] <= target) {
++				return 1;
++			}
++		}
++	}
++
++	return 0;
++}
++
++/** Whether cheat `i` is on in this stage: a GE Plus one, offline, won and switched on. */
++s32 gexFrontCheatOn(s32 i)
++{
++	return (g_GePlusCheats >> i & 1) && gexFrontIsInside() && g_NetMode == NETMODE_NONE && frontCheatWon(i);
++}
++
++/** cheats.c's cheatsReset(), before the active set takes effect: the ones Perfect Dark has. */
++void gexFrontCheatsReset(void)
++{
++	for (s32 i = 0; i < NUM_MISSIONS; i++) {
++		const s32 id = g_GeCheats[i].cheat;
++
++		if (id >= 0 && gexFrontCheatOn(i)) {
++			if (id < 32) {
++				g_CheatsActiveBank0 |= 1u << id;
++			} else {
++				g_CheatsActiveBank1 |= 1u << (id - 32);
++			}
++		}
++	}
++}
++
++/** playerreset.c, with the player's own guns given: the cheats that are a gun, in solo. */
++void gexFrontCheatGifts(void)
++{
++	if (g_Vars.normmplayerisrunning) {
++		return;
++	}
++
++	for (s32 i = 0; i < NUM_MISSIONS; i++) {
++		const s32 weapon = g_GeCheats[i].weapon;
++
++		if (weapon && gexFrontCheatOn(i)) {
++			const s32 ammotype = bgunGetAmmoTypeForWeapon(weapon, FUNC_PRIMARY);
++
++			if (g_GeCheats[i].pair) {
++				invGiveDoubleWeapon(weapon, weapon);
++			} else {
++				invGiveSingleWeapon(weapon);
++			}
++
++			if (ammotype) {
++				bgunSetAmmoQuantity(ammotype, bgunGetCapacityByAmmotype(ammotype));
++			}
++		}
++	}
++}
++
++/** chr.c, a guard's animation: Fast Animation twice the speed, Slow Animation half. */
++f32 gexFrontCheatAnimScale(void)
++{
++	return (gexFrontCheatOn(9) ? 2.0f : 1.0f) * (gexFrontCheatOn(12) ? 0.5f : 1.0f);
++}
++
+ /**
+  * A font's glyphs are drawn straight out of its file's buffer, and the
+  * renderer keeps a texture by its address alone (not its size): a font freed
+@@ -1591,7 +1708,8 @@ static s32 frontMusic(void)
  
  s32 gexFrontMusic(void)
  {
@@ -1909,7 +2054,7 @@ index f68bccb8f..f0d6a2fad 100644
  }
  
  /* ---- the stages --------------------------------------------------------- */
-@@ -1856,6 +1864,39 @@ static void frontBuildCharacters(void)
+@@ -1856,6 +1974,39 @@ static void frontBuildCharacters(void)
  	}
  }
  
@@ -1949,22 +2094,23 @@ index f68bccb8f..f0d6a2fad 100644
  /* ---- the setup ---------------------------------------------------------- */
  
  // GoldenEye's scenarios in its own order, as the remake's
-@@ -2612,9 +2653,22 @@ static void frontSetCursorForMission(s32 mission);
+@@ -2612,9 +2763,23 @@ static void frontSetCursorForMission(s32 mission);
  static s32 frontMissionUnderCursor(void);
  static void frontOpenExtra(s32 row);
  
 -#define NUM_EXTRA_ROWS 2
-+#define NUM_EXTRA_ROWS 4
++#define NUM_EXTRA_ROWS 5
  #define EXTRA_CINEMA   0
  #define EXTRA_MONITORS 1
-+#define EXTRA_SETTINGS 2 // the GoldenEye tile's: the PS5 settings page (gyro, triggers, display...)
-+#define EXTRA_UPDATES  3 // the GoldenEye tile's: Check for Updates, which its folder hides otherwise
++#define EXTRA_CHEATS   2 // the GoldenEye tile's: GoldenEye's cheats, won by the target times
++#define EXTRA_SETTINGS 3 // the GoldenEye tile's: the PS5 settings page (gyro, triggers, display...)
++#define EXTRA_UPDATES  4 // the GoldenEye tile's: Check for Updates, which its folder hides otherwise
 +
 +static s32 frontExtraRows(void)
 +{
 +#if defined(PLATFORM_PS5) || defined(PD_TILE_TEST)
 +	if (g_Ps5GoldenEyeTile) {
-+		return 4;
++		return 5;
 +	}
 +#endif
 +
@@ -1973,18 +2119,94 @@ index f68bccb8f..f0d6a2fad 100644
  
  // What a row of the Cinema's second page is: GECINEMA_OPENING and
  // GECINEMA_ENDING, then these
-@@ -2934,7 +2988,9 @@ static void frontOpenMonitors(void)
+@@ -2931,10 +3096,85 @@ static void frontOpenMonitors(void)
+ 	g_Front.cursory = 134.0f + 70.0f * ((g_Front.monitor % TVS_PER_PAGE) / 4) + 11.0f;
+ }
+ 
++/** The Cheats page: a row a cheat won, on or off; the ones not won yet are not listed. */
++static MenuItemHandlerResult menuhandlerGeCheat(s32 operation, struct menuitem *item, union handlerdata *data)
++{
++	const s32 i = item->param;
++
++	switch (operation) {
++	case MENUOP_CHECKHIDDEN:
++		return !frontCheatWon(i);
++	case MENUOP_GET:
++		return g_GePlusCheats >> i & 1;
++	case MENUOP_SET:
++		g_GePlusCheats ^= 1 << i;
++		break;
++	}
++
++	return 0;
++}
++
++static MenuItemHandlerResult menuhandlerGeCheatsNone(s32 operation, struct menuitem *item, union handlerdata *data)
++{
++	if (operation == MENUOP_CHECKHIDDEN) {
++		for (s32 i = 0; i < NUM_MISSIONS; i++) {
++			if (frontCheatWon(i)) {
++				return true;
++			}
++		}
++	}
++
++	return 0;
++}
++
++#define GECHEAT_ROW(i, name) { MENUITEMTYPE_CHECKBOX, i, MENUITEMFLAG_LITERAL_TEXT, (uintptr_t)name, 0, menuhandlerGeCheat }
++
++static struct menuitem g_GeCheatsMenuItems[] = {
++	{ MENUITEMTYPE_LABEL, 0, MENUITEMFLAG_LESSLEFTPADDING | MENUITEMFLAG_SMALLFONT | MENUITEMFLAG_LITERAL_TEXT,
++		(uintptr_t)"Beat a mission's target time on its difficulty\nto win its cheat. Times don't count with one on.\n", 0, NULL },
++	{ MENUITEMTYPE_LABEL, 0, MENUITEMFLAG_LESSLEFTPADDING | MENUITEMFLAG_LITERAL_TEXT,
++		(uintptr_t)"No cheats won yet.\n", 0, menuhandlerGeCheatsNone },
++	GECHEAT_ROW(0, "Paintball Mode"),
++	GECHEAT_ROW(1, "Invincibility"),
++	GECHEAT_ROW(2, "DK Mode"),
++	GECHEAT_ROW(3, "2x Grenade Launcher"),
++	GECHEAT_ROW(4, "2x Rocket Launcher"),
++	GECHEAT_ROW(5, "Turbo Mode"),
++	GECHEAT_ROW(6, "No Radar (Multiplayer)"),
++	GECHEAT_ROW(7, "Tiny Bond"),
++	GECHEAT_ROW(8, "2x Throwing Knives"),
++	GECHEAT_ROW(9, "Fast Animation"),
++	GECHEAT_ROW(10, "Invisibility"),
++	GECHEAT_ROW(11, "Enemy Rockets"),
++	GECHEAT_ROW(12, "Slow Animation"),
++	GECHEAT_ROW(13, "Silver PP7"),
++	GECHEAT_ROW(14, "2x Hunting Knives"),
++	GECHEAT_ROW(15, "Infinite Ammo"),
++	GECHEAT_ROW(16, "2x RC-P90"),
++	GECHEAT_ROW(17, "Gold PP7"),
++	GECHEAT_ROW(18, "2x Laser"),
++	GECHEAT_ROW(19, "All Guns"),
++	{ MENUITEMTYPE_SEPARATOR, 0, 0, 0, 0, NULL },
++	{ MENUITEMTYPE_SELECTABLE, 0, MENUITEMFLAG_SELECTABLE_CLOSESDIALOG | MENUITEMFLAG_LITERAL_TEXT, (uintptr_t)"Done\n", 0, NULL },
++	{ MENUITEMTYPE_END },
++};
++
++struct menudialogdef g_GeCheatsMenuDialog = {
++	MENUDIALOGTYPE_DEFAULT,
++	(uintptr_t)"Cheats",
++	g_GeCheatsMenuItems,
++	NULL,
++	MENUDIALOGFLAG_LITERAL_TEXT,
++	NULL,
++};
++
  static void frontTickExtra(s32 pick, s32 back)
  {
  	if (!g_Front.tabprev) {
 -		g_Front.highlight = g_Front.cursory >= 211 ? EXTRA_MONITORS : EXTRA_CINEMA;
-+		g_Front.highlight = g_Front.cursory >= 271 && frontExtraRows() > EXTRA_UPDATES ? EXTRA_UPDATES
-+			: g_Front.cursory >= 241 && frontExtraRows() > EXTRA_SETTINGS ? EXTRA_SETTINGS
++		g_Front.highlight = g_Front.cursory >= 301 && frontExtraRows() > EXTRA_UPDATES ? EXTRA_UPDATES
++			: g_Front.cursory >= 271 && frontExtraRows() > EXTRA_SETTINGS ? EXTRA_SETTINGS
++			: g_Front.cursory >= 241 && frontExtraRows() > EXTRA_CHEATS ? EXTRA_CHEATS
 +			: g_Front.cursory >= 211 ? EXTRA_MONITORS : EXTRA_CINEMA;
  	}
  
  	if (back || (pick && g_Front.tabprev)) {
-@@ -2951,6 +3007,28 @@ static void frontTickExtra(s32 pick, s32 back)
+@@ -2951,6 +3191,32 @@ static void frontTickExtra(s32 pick, s32 back)
  		frontSfx(GESFX_DOOR_METAL_CLOSE2, MENUSOUND_SELECT);
  		frontOpenMonitors();
  	}
@@ -2003,6 +2225,10 @@ index f68bccb8f..f0d6a2fad 100644
 +		frontSfx(GESFX_DOOR_METAL_CLOSE2, MENUSOUND_SELECT);
 +		frontClose();
 +		menuPushDialog(page);
++	} else if (pick && g_Front.highlight == EXTRA_CHEATS) {
++		frontSfx(GESFX_DOOR_METAL_CLOSE2, MENUSOUND_SELECT);
++		frontClose();
++		menuPushDialog(&g_GeCheatsMenuDialog);
 +	} else if (pick && g_Front.highlight == EXTRA_UPDATES) {
 +		// Perfect Dark's Check for Updates page, the same way
 +		frontSfx(GESFX_DOOR_METAL_CLOSE2, MENUSOUND_SELECT);
@@ -2013,7 +2239,7 @@ index f68bccb8f..f0d6a2fad 100644
  }
  
  /**
-@@ -3820,6 +3898,24 @@ void gexFrontTick(void)
+@@ -3820,6 +4086,24 @@ void gexFrontTick(void)
  		inputMouseHideCursorThisFrame();
  	}
  
@@ -2038,7 +2264,7 @@ index f68bccb8f..f0d6a2fad 100644
  	frontTickScreen();
  
  	// A page GoldenEye opens puts the cursor on its first choice (the
-@@ -3914,6 +4010,23 @@ static void frontTickScreen(void)
+@@ -3914,6 +4198,23 @@ static void frontTickScreen(void)
  			g_Front.highlight = g_Front.cursory >= 275.0f ? 2 : g_Front.cursory >= 243.0f ? 1 : 0;
  		}
  
@@ -2062,7 +2288,7 @@ index f68bccb8f..f0d6a2fad 100644
  		if (back || (pick && g_Front.tabprev)) {
  			frontSfx(GESFX_DOOR_METAL_CLOSE2, MENUSOUND_TOGGLEOFF);
  			frontClose();
-@@ -3975,6 +4088,66 @@ s32 gexFrontIsActive(void)
+@@ -3975,6 +4276,66 @@ s32 gexFrontIsActive(void)
  	return g_Front.active;
  }
  
@@ -2129,7 +2355,7 @@ index f68bccb8f..f0d6a2fad 100644
  s32 gexFrontOpen(void)
  {
  	g_FrontLeaving = 0;
-@@ -5580,9 +5753,23 @@ void gexFrontTextWrap(s32 gothic, const char *text, char *out, size_t len, s32 w
+@@ -5580,9 +5941,23 @@ void gexFrontTextWrap(s32 gothic, const char *text, char *out, size_t len, s32 w
  }
  
  /** frontAddStartTabText() and frontAddPreviousTabText(): Bank Gothic, turned, a tab's middle. */
@@ -2153,7 +2379,7 @@ index f68bccb8f..f0d6a2fad 100644
  	s32 width;
  	s32 height;
  	s32 v;
-@@ -5980,8 +6167,11 @@ static void frontWidenBackdrop(void)
+@@ -5980,8 +6355,11 @@ static void frontWidenBackdrop(void)
   */
  static Gfx *frontDrawReleaseBackdrop(Gfx *gdl)
  {
@@ -2166,16 +2392,16 @@ index f68bccb8f..f0d6a2fad 100644
  	if (!tile) {
  		return gdl;
  	}
-@@ -6815,7 +7005,7 @@ static Gfx *frontDrawMission(Gfx *gdl)
+@@ -6815,7 +7193,7 @@ static Gfx *frontDrawMission(Gfx *gdl)
  /** EXTRA: the difficulty page's rows again, with no mission over them. */
  static Gfx *frontDrawExtra(Gfx *gdl)
  {
 -	static const char *rows[NUM_EXTRA_ROWS] = { LANG_N("Cinema\n"), LANG_N("Monitor Programs\n") };
-+	static const char *rows[NUM_EXTRA_ROWS] = { LANG_N("Cinema\n"), LANG_N("Monitor Programs\n"), LANG_N("PS5 Settings\n"), LANG_N("Check for Updates\n") };
++	static const char *rows[NUM_EXTRA_ROWS] = { LANG_N("Cinema\n"), LANG_N("Monitor Programs\n"), LANG_N("Cheats\n"), LANG_N("PS5 Settings\n"), LANG_N("Check for Updates\n") };
  
  	gdl = frontPrint(gdl, 0x37, 0x8f, langTr("EXTRA:\n"), COLOUR_ON);
  
-@@ -6824,7 +7014,7 @@ static Gfx *frontDrawExtra(Gfx *gdl)
+@@ -6824,7 +7202,7 @@ static Gfx *frontDrawExtra(Gfx *gdl)
  		gdl = frontTextSetup(gdl);
  	}
  
@@ -2184,6 +2410,19 @@ index f68bccb8f..f0d6a2fad 100644
  		char num[8];
  
  		snprintf(num, sizeof(num), "%d.\n", i + 1);
+@@ -7590,6 +7968,12 @@ static Gfx *frontDrawStats(Gfx *gdl)
+ 		}
+ 
+ 		gdl = frontPrint(gdl, 0x82, 0xa9 + line, buf, COLOUR_ON);
++
++		// GoldenEye's own line, when this run won the mission's cheat
++		if (g_FrontReport.completed && secs <= target && !g_HasHackTargetTimes && !frontIsHack()
++				&& !g_CheatsActiveBank0 && !g_CheatsActiveBank1) {
++			gdl = frontPrint(gdl, 0x82, 0xa9 + line * 2, LANG_N("New cheat available!"), COLOUR_FAILED);
++		}
+ 	} else if (best > 0) {
+ 		gdl = frontPrint(gdl, 0x37, 0xa9 + line, frontString(TITLE_BESTTIME), COLOUR_ON);
+ 		snprintf(buf, sizeof(buf), "%02d:%02d", best / 60, best % 60);
 diff --git a/port/src/gexplusrom.c b/port/src/gexplusrom.c
 index 1907f81fe..ebb17da0d 100644
 --- a/port/src/gexplusrom.c
@@ -5525,6 +5764,91 @@ index 41fc439cd..e528c23f9 100644
  		inputMouseGetScaledDelta(&movedata.freelookdx, &movedata.freelookdy);
  		allowmcross = (PLAYER_EXTCFG().mouseaimmode == MOUSEAIM_CLASSIC) && !aimlock &&
  			(movedata.freelookdx || movedata.freelookdy || g_Vars.currentplayer->swivelpos[0] || g_Vars.currentplayer->swivelpos[1]);
+diff --git a/src/game/cheats.c b/src/game/cheats.c
+index 14a35c834..8336390f0 100644
+--- a/src/game/cheats.c
++++ b/src/game/cheats.c
+@@ -19,6 +19,9 @@
+ #include "data.h"
+ #include "string.h"
+ #include "types.h"
++#ifndef PLATFORM_N64
++#include "gexfront.h"
++#endif
+ 
+ u32 g_CheatsActiveBank0;
+ u32 g_CheatsActiveBank1;
+@@ -339,6 +342,11 @@ void cheatsReset(void)
+ 		g_CheatsActiveBank1 = 0;
+ 	}
+ 
++#ifndef PLATFORM_N64
++	// GoldenEye's cheats on a GE Plus stage, won by its target times (gexfront.c)
++	gexFrontCheatsReset();
++#endif
++
+ 	// Set any "always on" cheats to active and properly activate all active cheats
+ 	for (cheat_id = 0; cheat_id < ARRAYCOUNT(g_Cheats); cheat_id++) {
+ 		if (g_Cheats[cheat_id].flags & CHEATFLAG_ALWAYSON) {
+diff --git a/src/game/chr.c b/src/game/chr.c
+index 43a78dcdf..661ffe1d0 100644
+--- a/src/game/chr.c
++++ b/src/game/chr.c
+@@ -115,6 +115,9 @@ bool chrIsGeListBody(struct chrdata *chr)
+ #include "getank.h"
+ #endif
+ #include "net/net.h"
++#ifndef PLATFORM_N64
++#include "gexfront.h"
++#endif
+ #endif
+ #endif
+ 
+@@ -2565,6 +2568,17 @@ void chr0f0220ec(struct chrdata *chr, s32 lvupdate240, bool arg2)
+ 		}
+ 	}
+ 
++#ifndef PLATFORM_N64
++	// GoldenEye's Fast and Slow Animation cheats, on everyone but the players (gexfront.c)
++	if (chr->prop && chr->prop->type != PROPTYPE_PLAYER) {
++		const f32 scale = gexFrontCheatAnimScale();
++
++		if (scale != 1.0f) {
++			lvupdate240 = (s32)(lvupdate240 * scale + 0.5f);
++		}
++	}
++#endif
++
+ 	if (chr->chrflags & CHRCFLAG_DELAYANIM) {
+ 		chr->chrflags &= ~CHRCFLAG_DELAYANIM;
+ 	} else if (arg2) {
+diff --git a/src/game/debug2.c b/src/game/debug2.c
+index d4918a34a..b85e79842 100644
+--- a/src/game/debug2.c
++++ b/src/game/debug2.c
+@@ -13,6 +13,9 @@
+ #include "bss.h"
+ #include "data.h"
+ #include "types.h"
++#ifndef PLATFORM_N64
++#include "gexfront.h"
++#endif
+ 
+ #define DEBUGMENU_MAIN     0
+ #define DEBUGMENU_CUTSCENE 1
+@@ -815,6 +818,12 @@ void debug0f11ee00(void) // not called
+ 
+ bool debugIsTurboModeEnabled(void)
+ {
++#ifndef PLATFORM_N64
++	// GoldenEye's Turbo Mode cheat (gexfront.c)
++	if (gexFrontCheatOn(GECHEAT_TURBO)) {
++		return true;
++	}
++#endif
+ 	return g_DebugTurboMode;
+ }
+ 
 diff --git a/src/game/filemgr.c b/src/game/filemgr.c
 index aef9f054e..5262fcec7 100644
 --- a/src/game/filemgr.c
@@ -6284,6 +6608,55 @@ index f0fd89d7a..702ff2b1c 100644
  		} else if (g_Vars.currentplayer->isdead && g_NetMode != NETMODE_NONE && netSpecDeadCameraTick()) {
  			// netplay: a dead co-op player watching the others (netspec.c)
  		} else
+diff --git a/src/game/playerreset.c b/src/game/playerreset.c
+index a3fe764ae..0d741ab43 100644
+--- a/src/game/playerreset.c
++++ b/src/game/playerreset.c
+@@ -29,6 +29,9 @@
+ #include "types.h"
+ #ifndef PLATFORM_N64
+ #include "net/net.h"
++#ifndef PLATFORM_N64
++#include "gexfront.h"
++#endif
+ #endif
+ 
+ void playerInitEyespy(void)
+@@ -312,6 +315,11 @@ void playerReset(void)
+ 		invGiveSingleWeapon(WEAPON_RTRACKER);
+ 	}
+ 
++#ifndef PLATFORM_N64
++	// GoldenEye's cheats that are guns (gexfront.c)
++	gexFrontCheatGifts();
++#endif
++
+ 	if (cheatIsActive(CHEAT_ROCKETLAUNCHER)) {
+ 		invGiveSingleWeapon(WEAPON_ROCKETLAUNCHER);
+ 		bgunSetAmmoQuantity(AMMOTYPE_ROCKET, 10);
+diff --git a/src/game/radar.c b/src/game/radar.c
+index 0b83651b5..3aabab44b 100644
+--- a/src/game/radar.c
++++ b/src/game/radar.c
+@@ -22,6 +22,9 @@
+ #include "types.h"
+ #ifndef PLATFORM_N64
+ #include "gehud.h"
++#ifndef PLATFORM_N64
++#include "gexfront.h"
++#endif
+ 
+ // GoldenEye's radar is the one being drawn (gehud.c), between radarRender()'s
+ // begin and end
+@@ -279,7 +282,7 @@ Gfx *radarRender(Gfx *gdl)
+ 	playercount = PLAYERCOUNT();
+ 
+ 	if (g_Vars.mplayerisrunning) {
+-		if (g_Vars.normmplayerisrunning && (g_MpSetup.options & MPOPTION_NORADAR)) {
++		if (g_Vars.normmplayerisrunning && ((g_MpSetup.options & MPOPTION_NORADAR) || gexFrontCheatOn(GECHEAT_NORADAR))) {
+ 			return gdl;
+ 		}
+ 
 diff --git a/src/game/timing.c b/src/game/timing.c
 index a87d348a1..c39151c2c 100644
 --- a/src/game/timing.c
@@ -6320,6 +6693,34 @@ index a87d348a1..c39151c2c 100644
  	g_Vars.lostframetime60t = g_Vars.lostframetime60t + diffframet - diffframe60 * CYCLES_PER_FRAME;
  	g_Vars.lostframetime240t = g_Vars.lostframetime240t + diffframet - diffframe240 * (CYCLES_PER_FRAME / 4);
  
+diff --git a/src/game/wallhit.c b/src/game/wallhit.c
+index 23f7418df..58ff2b1b2 100644
+--- a/src/game/wallhit.c
++++ b/src/game/wallhit.c
+@@ -27,6 +27,9 @@
+ #include "gebeanstage.h"
+ #ifndef PLATFORM_N64
+ #include "net/net.h"
++#ifndef PLATFORM_N64
++#include "gexfront.h"
++#endif
+ #endif
+ #endif
+ 
+@@ -283,6 +286,13 @@ bool chrIsUsingPaintball(struct chrdata *chr)
+ 	s32 prevplayernum = g_Vars.currentplayernum;
+ 	bool paintball;
+ 
++#ifndef PLATFORM_N64
++	// GoldenEye's Paintball Mode cheat: every shot (gexfront.c)
++	if (gexFrontCheatOn(GECHEAT_PAINTBALL)) {
++		return true;
++	}
++#endif
++
+ 	if (chr && chr->prop && chr->prop->type == PROPTYPE_PLAYER) {
+ 		setCurrentPlayerNum(playermgrGetPlayerNumByProp(chr->prop));
+ 	} else {
 diff --git a/src/include/platform.h b/src/include/platform.h
 index 79a1864e8..ffa387037 100644
 --- a/src/include/platform.h

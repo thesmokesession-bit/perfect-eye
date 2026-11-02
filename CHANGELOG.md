@@ -2,6 +2,13 @@
 
 ## 1.3.0 (unreleased)
 
+- **GoldenEye's cheats.** Beat a mission's target time on its difficulty (or a harder one) and
+  you win its cheat, as on the cartridge: Paintball Mode, Invincibility, DK Mode, Turbo Mode,
+  Tiny Bond, Fast and Slow Animation, Enemy Rockets, Infinite Ammo, All Guns, the paired guns,
+  the Silver and Gold PP7 and the rest, twenty in all. Turn them on and off under **EXTRA →
+  Cheats** on the GoldenEye tile; the mission report says **New cheat available!** when you win
+  one. Times don't count while a cheat is on. Invisibility gives Perfect Dark's cloaking device,
+  the nearest thing the engine has. Offline only.
 - **Check for Updates on the GoldenEye tile:** EXTRA, then Check for Updates.
 - **The PS5 Settings page has Analog Stick Settings and GoldenEye: Locked Progression**, so the
   GoldenEye tile can change both without editing pd.ini. Locked Progression opens GoldenEye's
