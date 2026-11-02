@@ -1,5 +1,14 @@
 # Update notes
 
+## 1.3.1 (2026-11-02)
+
+- **GoldenEye's watch says the right thing for LOOK UP/DOWN.** It had UPRIGHT and REVERSE the wrong
+  way round: it said REVERSE when the look was upright. It now names what the look does.
+- **GoldenEye's watch settings stay after a reboot.** The options page (LOOK UP/DOWN, the screen
+  setting, auto-aim and the rest) and the MUSIC and FX sliders are saved to pd.ini when the watch
+  closes, and come back at the next mission. Before, they went back to the defaults every time
+  the game started.
+
 ## 1.3.0 (2026-11-02)
 
 - **GoldenEye's cheats.** Beat a mission's target time on its difficulty (or a harder one) and
