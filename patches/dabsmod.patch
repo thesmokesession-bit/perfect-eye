@@ -1159,10 +1159,20 @@ index 40ca395cb..525cde808 100644
  	s32 auth;           // send X-Ghost-User and X-Ghost-Pin
  	// Follow a redirect rather than treating one as the reply. Off for the
 diff --git a/port/include/input.h b/port/include/input.h
-index a15376e4c..d6a01642a 100644
+index a15376e4c..ce83dd567 100644
 --- a/port/include/input.h
 +++ b/port/include/input.h
-@@ -211,6 +211,16 @@ s32 inputGetKeyByName(const char *name);
+@@ -123,6 +123,9 @@ enum mouselockmode {
+ 
+ // returns bitmask of connected controllers or -1 if failed
+ s32 inputInit(void);
++#ifdef PLATFORM_PS5
++void inputPs5ApplyStickDefault(void);
++#endif
+ 
+ // read the specified player's inputs into the N64 pad struct
+ // returns 0 if read, non-0 if failed
+@@ -211,6 +214,16 @@ s32 inputGetKeyByName(const char *name);
  
  // get human-readable name from VK_ value
  const char *inputGetKeyName(s32 vk);
@@ -2456,7 +2466,7 @@ index ecfb59a65..167318cb1 100644
  
  	return 0;
 diff --git a/port/src/input.c b/port/src/input.c
-index a5e75de49..7a46f8682 100644
+index a5e75de49..d12f44fc9 100644
 --- a/port/src/input.c
 +++ b/port/src/input.c
 @@ -13,6 +13,14 @@
@@ -2627,7 +2637,42 @@ index a5e75de49..7a46f8682 100644
  static const char *ckNames[CK_TOTAL_COUNT] = {
  	"R_CBUTTONS",
  	"L_CBUTTONS",
-@@ -1368,12 +1522,489 @@ static inline void inputUpdateMouse(void)
+@@ -1020,6 +1174,34 @@ static inline void inputLoadBinds(void)
+ 	inputSaveBinds();
+ }
+ 
++#ifdef PLATFORM_PS5
++// Input.PS5StickDefault: the PS5's own right stick sensitivity has been applied
++static s32 g_InputPs5StickDefault = 0;
++
++/**
++ * The DualSense's right stick at full sensitivity aims jittery and too fast (a player's
++ * report, 2026-11-02): 0.6 instead, once, for every player whose right stick is still at
++ * the 1.0 the game starts with. A player who set their own keeps it; after this, any
++ * value they choose stays. Straight after the config is read (main.c).
++ */
++void inputPs5ApplyStickDefault(void)
++{
++	if (g_InputPs5StickDefault) {
++		return;
++	}
++
++	for (s32 c = 0; c < INPUT_MAX_CONTROLLERS; c++) {
++		for (s32 k = 2; k < 4; k++) {
++			if (padsCfg[c].sens[k] == 1.f) {
++				padsCfg[c].sens[k] = 0.6f;
++			}
++		}
++	}
++
++	g_InputPs5StickDefault = 1;
++}
++#endif
++
+ s32 inputInit(void)
+ {
+ 	if (g_NetDedicated) return 0;
+@@ -1368,12 +1550,489 @@ static inline void inputUpdateMouse(void)
  	}
  }
  
@@ -3117,7 +3162,7 @@ index a5e75de49..7a46f8682 100644
  	if (mouseEnabled) {
  		inputUpdateMouse();
  	}
-@@ -1795,6 +2426,12 @@ void inputMouseGetScaledDelta(f32* dx, f32* dy)
+@@ -1795,6 +2454,12 @@ void inputMouseGetScaledDelta(f32* dx, f32* dy)
  		mdx = rawdx * (0.022f / 3.5f) * mouseSensX;
  		mdy = rawdy * (0.022f / 3.5f) * mouseSensY;
  	}
@@ -3130,7 +3175,7 @@ index a5e75de49..7a46f8682 100644
  	if (dx) *dx = mdx;
  	if (dy) *dy = mdy;
  }
-@@ -1908,6 +2545,35 @@ const char *inputGetKeyName(s32 vk)
+@@ -1908,6 +2573,35 @@ const char *inputGetKeyName(s32 vk)
  	return vkNames[vk];
  }
  
@@ -3166,7 +3211,7 @@ index a5e75de49..7a46f8682 100644
  s32 inputGetKeyByName(const char *name)
  {
  	s32 start = 0;
-@@ -1949,6 +2615,13 @@ void inputClearLastKey(void)
+@@ -1949,6 +2643,13 @@ void inputClearLastKey(void)
  
  s32 inputGetLastKey(void)
  {
@@ -3180,7 +3225,7 @@ index a5e75de49..7a46f8682 100644
  	return lastKey;
  }
  
-@@ -1958,6 +2631,10 @@ void inputStartTextInput(void)
+@@ -1958,6 +2659,10 @@ void inputStartTextInput(void)
  	lastKey = 0;
  	textInput = 1;
  	SDL_StartTextInput();
@@ -3191,7 +3236,7 @@ index a5e75de49..7a46f8682 100644
  }
  
  /**
-@@ -2069,6 +2746,14 @@ const char *inputGetClipboard(void)
+@@ -2069,6 +2774,14 @@ const char *inputGetClipboard(void)
  void inputStopTextInput(void)
  {
  	SDL_StopTextInput();
@@ -3206,7 +3251,7 @@ index a5e75de49..7a46f8682 100644
  
  	if (textInput) {
  		const u8 *state = SDL_GetKeyboardState(NULL);
-@@ -2099,6 +2784,11 @@ u32 inputGetKeyModState(void)
+@@ -2099,6 +2812,12 @@ u32 inputGetKeyModState(void)
  PD_CONSTRUCTOR static void inputConfigInit(void)
  {
  	configRegisterInt("Input.MouseEnabled", &mouseEnabled, 0, 1);
@@ -3214,6 +3259,7 @@ index a5e75de49..7a46f8682 100644
 +	configRegisterInt("Input.PS5Gyro", &g_InputPs5Gyro, 0, 1);
 +	configRegisterFloat("Input.PS5GyroSpeed", &gyroSpeed, 0.1f, 5.0f);
 +	configRegisterInt("Input.PS5AdaptiveTriggers", &g_InputPs5Triggers, 0, 1);
++	configRegisterInt("Input.PS5StickDefault", &g_InputPs5StickDefault, 0, 1);
 +#endif
  	configRegisterInt("Input.MouseLockMode", &mouseLockMode, MLOCK_OFF, MLOCK_AUTO);
  	configRegisterFloat("Input.MouseSpeedX", &mouseSensX, -30.f, 30.f);
@@ -3370,7 +3416,7 @@ index 88588d034..d3b8aba2d 100644
  		return gdl;
  	}
 diff --git a/port/src/main.c b/port/src/main.c
-index 52d3fdc46..68db03f62 100644
+index 52d3fdc46..4306a505a 100644
 --- a/port/src/main.c
 +++ b/port/src/main.c
 @@ -4,6 +4,7 @@
@@ -3409,7 +3455,17 @@ index 52d3fdc46..68db03f62 100644
  	sysInitArgs(argc, argv);
  
  	if (!sysArgCheck("--no-crash-handler")) {
-@@ -371,6 +391,10 @@ int main(int argc, const char **argv)
+@@ -244,6 +264,9 @@ int main(int argc, const char **argv)
+ 	}
+ 
+ 	mainApplySettingsRevision();
++#ifdef PLATFORM_PS5
++	inputPs5ApplyStickDefault();
++#endif
+ 
+ 	// --dedicated (no window, sound or input) and --net-clock-test
+ 	netInitArgs();
+@@ -371,6 +394,10 @@ int main(int argc, const char **argv)
  		g_FixedStep = fps < 30 ? 30 : fps > 240 ? 240 : fps;
  	}
  	g_ExitFrame = sysArgGetInt("--exit-frame", 0);
@@ -3420,7 +3476,7 @@ index 52d3fdc46..68db03f62 100644
  	g_StateHashEvery = sysArgGetInt("--state-hash", 0);
  	g_ShotFrame = sysArgGetInt("--screenshot-frame", 0);
  	g_AlarmAtFrame = sysArgGetInt("--alarm-at", 0);
-@@ -437,6 +461,12 @@ int main(int argc, const char **argv)
+@@ -437,6 +464,12 @@ int main(int argc, const char **argv)
  		}
  	}
  
@@ -4264,7 +4320,7 @@ index e743746e0..ba503992d 100644
  	{ MENUITEMTYPE_SELECTABLE, 0, MENUITEMFLAG_SELECTABLE_OPENSDIALOG, L_MPMENU_031, 0, (void *)&g_MpCharacterMenuDialog }, // "Character"
  	{ MENUITEMTYPE_SELECTABLE, 0, MENUITEMFLAG_SELECTABLE_OPENSDIALOG, L_MPMENU_033, 0, (void *)&g_MpControlMenuDialog }, // "Control"
 diff --git a/port/src/optionsmenu.c b/port/src/optionsmenu.c
-index 76cceaa09..9c3a6cb11 100644
+index 76cceaa09..d7b302bb1 100644
 --- a/port/src/optionsmenu.c
 +++ b/port/src/optionsmenu.c
 @@ -2620,7 +2620,7 @@ static MenuItemHandlerResult menuhandlerBind(s32 operation, struct menuitem *ite
@@ -4294,7 +4350,7 @@ index 76cceaa09..9c3a6cb11 100644
  			keyname[sizeof(keyname) - 1] = '\0';
  			for (char *p = keyname; *p; ++p) {
  				if (*p == '_') *p = ' ';
-@@ -7928,7 +7928,225 @@ struct menudialogdef g_ExtendedAdvancedMenuDialog = {
+@@ -7928,7 +7928,244 @@ struct menudialogdef g_ExtendedAdvancedMenuDialog = {
  	NULL,
  };
  
@@ -4471,6 +4527,25 @@ index 76cceaa09..9c3a6cb11 100644
 +		(uintptr_t)"Adaptive Triggers",
 +		0,
 +		menuhandlerPs5Triggers,
++	},
++	{
++		// the right stick's sensitivity and the rest, which the GoldenEye tile cannot
++		// reach otherwise (a player's report, 2026-11-02)
++		MENUITEMTYPE_SELECTABLE,
++		0,
++		MENUITEMFLAG_SELECTABLE_OPENSDIALOG | MENUITEMFLAG_LITERAL_TEXT,
++		(uintptr_t)"Analog Stick Settings\n",
++		0,
++		(void *)&g_ExtendedStickMenuDialog,
++	},
++	{
++		// GoldenEye's missions open one at a time, as on the cartridge
++		MENUITEMTYPE_CHECKBOX,
++		0,
++		MENUITEMFLAG_LITERAL_TEXT,
++		(uintptr_t)"GoldenEye: Locked Progression",
++		0,
++		menuhandlerGePlusLocked,
 +	},
 +	{
 +		MENUITEMTYPE_CHECKBOX,

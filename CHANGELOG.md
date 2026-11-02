@@ -1,5 +1,18 @@
 # Update notes
 
+## 1.3.0 (unreleased)
+
+- **Check for Updates on the GoldenEye tile:** EXTRA, then Check for Updates.
+- **The PS5 Settings page has Analog Stick Settings and GoldenEye: Locked Progression**, so the
+  GoldenEye tile can change both without editing pd.ini. Locked Progression opens GoldenEye's
+  missions one at a time, as on the cartridge.
+- **The right stick is less twitchy on the DualSense:** its sensitivity starts at 0.6 instead of
+  1.0. If you had already changed yours, it stays as you set it.
+- The Check for Updates page on the PS5 drops the dev and stable channel rows and says which
+  version you have in plain words.
+- Fewer stutters when a page of small text opens for the first time (Check for Updates, What's
+  New) with the Xbox 360 look on.
+
 ## 1.2.0 (2026-10-19)
 
 **From 1.0.0 or 1.1.0, install this one from your computer** (`ps5-push.command` or FTP): the
