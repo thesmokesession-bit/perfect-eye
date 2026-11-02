@@ -43,7 +43,10 @@ title PPSA64008 "$root/sce_sys_ge" "The GoldenEye tile runs inside Perfect Dark,
 title folder. The first start puts them in place and converts GoldenEye, then opens it." "Optional: your own copy of GoldenEye 007's Xbox 360 (XBLA) version goes in this folder: the
 584108A9 folder as it comes off an Xbox 360 (or the file inside it), the folder it unpacks to
 (the one holding default.xex and files/), or a .7z or .zip of that folder. The first start
-unpacks a package, which takes about a minute. The N64 ROMs are still needed."
+unpacks a package, which takes about a minute. The N64 ROMs are still needed.
+
+Also optional: a copy of Perfect Dark's Xbox 360 package (the file starting 4287CC74) in this
+folder too gives the GoldenEye tile's pop-up menus their HD font."
 
 # beside the title folders: the Mac's (or any Unix's) wireless install/update and save sync
 cp "$root/tools/ps5-push.command" "$root/tools/ps5-sync-saves.command" "$root/dist/"

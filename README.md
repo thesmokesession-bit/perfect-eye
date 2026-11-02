@@ -105,6 +105,9 @@ goes in it, and the N64 ROM stays where it is: the game needs both.
   Xbox 360 (a 42-character name starting `4287CC74`), or an archive named `Perfect Dark XBLA.7z`
   or `Perfect Dark XBLA.zip`. Then turn on **Xbox 360 Look** on the PS5 Settings page (Extended
   Options → PS5). Perfect Dark gets that release's HD models, textures, rooms, font and explosions.
+  Put a second copy in `PPSA64008/added-content/` as well: the GoldenEye tile's pop-up menus take
+  their HD font from it, and without it their text is the N64's, blocky at 4K. Each tile can only
+  read its own folder.
 
 Not included here: they're game data, like the ROMs.
 

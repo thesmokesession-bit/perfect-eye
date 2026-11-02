@@ -17,6 +17,10 @@
   Updates, online) drew the N64's small font stretched to 4K. With Perfect Dark's Xbox 360 package in
   the Perfect Dark tile's `added-content/`, the GoldenEye tile now uses it too for the HD font, so
   one copy covers both tiles.
+- **Sharp menu text on the GoldenEye tile:** its pop-up pages (Cheats, PS5 Settings, Check for
+  Updates, online) use the HD font from Perfect Dark's Xbox 360 package, so put a copy of that
+  package in `PPSA64008/added-content/` too. Without it they draw the N64's small font, which looks
+  blocky at 4K. A title can't read the other title's folder, so each needs its own copy.
 - **The right stick is less twitchy on the DualSense:** its sensitivity starts at 0.6 instead of
   1.0. If you had already changed yours, it stays as you set it.
 - The Check for Updates page on the PS5 drops the dev and stable channel rows and says which
