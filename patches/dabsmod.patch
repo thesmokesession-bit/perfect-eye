@@ -1888,6 +1888,167 @@ index cc7420715..1d6b3cdef 100644
  	if (tried) {
  		return tile;
  	}
+diff --git a/port/src/gewatch.c b/port/src/gewatch.c
+index c7a00483a..66b99fea5 100644
+--- a/port/src/gewatch.c
++++ b/port/src/gewatch.c
+@@ -58,6 +58,7 @@
+ #include "bss.h"
+ #include "data.h"
+ #include "fs.h"
++#include "config.h"
+ #include "input.h"
+ #include "mod.h"
+ #include "modloader.h"
+@@ -1201,6 +1202,9 @@ static void watchUnload(void)
+ 	g_Watch.state = WS_CLOSED;
+ }
+ 
++static void watchApplySaved(void);
++static s32 g_WatchSavedDirty; // the options page changed since pd.ini was written (g_WatchSaved)
++
+ /**
+  * A stage has loaded. In a GE Plus level the watch takes the arm, the fonts
+  * and GoldenEye's own strings; anywhere else it lets go of them.
+@@ -1259,6 +1263,8 @@ void geWatchStageStart(s32 stagenum)
+ 		snprintf(g_WatchLangFile, sizeof(g_WatchLangFile), "%s", lang);
+ 	}
+ 
++	watchApplySaved();
++
+ 	g_Watch.loaded = 1;
+ 	g_Watch.state = WS_CLOSED;
+ 	g_Watch.owner = 0;
+@@ -1783,6 +1789,13 @@ static void watchSetPaused(s32 paused)
+ 
+ 	g_Watch.paused = paused;
+ 
++#ifndef PLATFORM_N64
++	if (!paused && g_WatchSavedDirty) {
++		g_WatchSavedDirty = 0;
++		configSave(CONFIG_PATH);
++	}
++#endif
++
+ 	// online the level is everyone's - the host's world, or a client's copy
+ 	// of it - and the watch never stops it: the player whose watch it is
+ 	// stands still under it instead (geWatchMpHoldsInput(), and a client's
+@@ -2212,12 +2225,47 @@ static const struct watchoption g_Options[] = {
+ 
+ #define NUM_OPTIONS ((s32)(sizeof(g_Options) / sizeof(g_Options[0])))
+ 
++/*
++ * The options page kept in pd.ini under Game.GoldenEyeWatch*: its rows, then
++ * MUSIC and FX. Perfect Dark keeps them in its game file, which the GoldenEye
++ * tile never saves or loads, so they were back to the defaults at every boot.
++ * -1 is a row never changed, left to the game's default. Solo only: in a match
++ * each player's look is the frontend's (gexfront.c's GoldenEyeMpLook).
++ */
++#define SAVED_MUSIC NUM_OPTIONS
++#define SAVED_FX    (NUM_OPTIONS + 1)
++static s32 g_WatchSaved[NUM_OPTIONS + 2];
++
++#ifndef PLATFORM_N64
++static const char *const g_WatchSavedKeys[] = {
++	"Game.GoldenEyeWatchLookUpDown", "Game.GoldenEyeWatchAutoAim", "Game.GoldenEyeWatchAimControl",
++	"Game.GoldenEyeWatchSightOnScreen", "Game.GoldenEyeWatchLookAhead", "Game.GoldenEyeWatchAmmoOnScreen",
++	"Game.GoldenEyeWatchScreen", "Game.GoldenEyeWatchMusic", "Game.GoldenEyeWatchFx",
++};
++
++PD_CONSTRUCTOR static void watchSavedInit(void)
++{
++	for (s32 i = 0; i < NUM_OPTIONS + 2; i++) {
++		g_WatchSaved[i] = -1;
++		configRegisterInt(g_WatchSavedKeys[i], &g_WatchSaved[i], -1, 0x7fff);
++	}
++}
++#endif
++
++static void watchRemember(s32 index, s32 value)
++{
++	if (!g_Vars.normmplayerisrunning && g_WatchSaved[index] != value) {
++		g_WatchSaved[index] = value;
++		g_WatchSavedDirty = 1;
++	}
++}
++
+ static s32 watchOptionValue(s32 row)
+ {
+ 	const s32 num = g_Vars.currentplayerstats ? g_Vars.currentplayerstats->mpindex : 0;
+ 
+ 	switch (row) {
+-	case 0: return optionsGetForwardPitch(num) ? 0 : 1;
++	case 0: return optionsGetForwardPitch(num) ? 1 : 0; // forward pitch is UPRIGHT: bondmove.c inverts without it
+ 	case 1: return optionsGetAutoAim(num) ? 1 : 0;
+ 	case 2: return optionsGetAimControl(num) ? 1 : 0;
+ 	case 3: return optionsGetSightOnScreen(num) ? 1 : 0;
+@@ -2230,12 +2278,10 @@ static s32 watchOptionValue(s32 row)
+ 	return 0;
+ }
+ 
+-static void watchSetOptionValue(s32 row, s32 value)
++static void watchSetOptionFor(s32 num, s32 row, s32 value)
+ {
+-	const s32 num = g_Vars.currentplayerstats ? g_Vars.currentplayerstats->mpindex : 0;
+-
+ 	switch (row) {
+-	case 0: optionsSetForwardPitch(num, value == 0); break;
++	case 0: optionsSetForwardPitch(num, value == 1); break;
+ 	case 1: optionsSetAutoAim(num, value != 0); break;
+ 	case 2: optionsSetAimControl(num, value); break;
+ 	case 3: optionsSetSightOnScreen(num, value != 0); break;
+@@ -2244,7 +2290,12 @@ static void watchSetOptionValue(s32 row, s32 value)
+ 	case 6: optionsSetScreenSize(value); break;
+ 	case 7: optionsSetScreenRatio(value); break;
+ 	}
++}
+ 
++static void watchSetOptionValue(s32 row, s32 value)
++{
++	watchSetOptionFor(g_Vars.currentplayerstats ? g_Vars.currentplayerstats->mpindex : 0, row, value);
++	watchRemember(row, value);
+ 	g_Vars.modifiedfiles |= MODFILE_GAME;
+ }
+ 
+@@ -2297,9 +2348,29 @@ static void watchAdjustVolume(s32 row)
+ 		sndSetSfxVolume((u16)v);
+ 	}
+ 
++	watchRemember(row == 0 ? SAVED_MUSIC : SAVED_FX, v);
++
+ 	g_Vars.modifiedfiles |= MODFILE_GAME;
+ }
+ 
++/** What pd.ini kept of the options page, on the solo player, as a stage starts. */
++static void watchApplySaved(void)
++{
++	for (s32 i = 0; i < NUM_OPTIONS; i++) {
++		if (g_WatchSaved[i] >= 0 && g_WatchSaved[i] < g_Options[i].numvalues) {
++			watchSetOptionFor(MPINDEX_SOLO, i, g_WatchSaved[i]);
++		}
++	}
++
++	if (g_WatchSaved[SAVED_MUSIC] >= 0 && g_WatchSaved[SAVED_MUSIC] <= VOL_MAX) {
++		optionsSetMusicVolume((u16)g_WatchSaved[SAVED_MUSIC]);
++	}
++
++	if (g_WatchSaved[SAVED_FX] >= 0 && g_WatchSaved[SAVED_FX] <= VOL_MAX) {
++		sndSetSfxVolume((u16)g_WatchSaved[SAVED_FX]);
++	}
++}
++
+ /**
+  * The control styles the control screen lists: GoldenEye's four one-pad
+  * styles, its four two-pad ones when a second pad is in (D_800409D8), and
+@@ -5626,7 +5697,7 @@ static Gfx *watchDrawControlLabels(Gfx *gdl, s32 mode)
+ {
+ 	const u8 *cs;
+ 	const s32 holding = g_Watch.controlrow == 1 && g_Watch.selected;
+-	const s32 upright = optionsGetForwardPitch(g_Vars.currentplayerstats ? g_Vars.currentplayerstats->mpindex : 0) ? 0 : 1;
++	const s32 upright = optionsGetForwardPitch(g_Vars.currentplayerstats ? g_Vars.currentplayerstats->mpindex : 0) ? 1 : 0;
+ 	const char *dir1 = watchString(upright ? STR_UP : STR_DOWN);
+ 	const char *dir2 = watchString(upright ? STR_DOWN : STR_UP);
+ 	s32 movesight = 0;
 diff --git a/port/src/gexfront.c b/port/src/gexfront.c
 index f68bccb8f..e29a1e51b 100644
 --- a/port/src/gexfront.c
