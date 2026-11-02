@@ -4720,10 +4720,64 @@ index e743746e0..ba503992d 100644
  	{ MENUITEMTYPE_SELECTABLE, 0, MENUITEMFLAG_SELECTABLE_OPENSDIALOG, L_MPMENU_031, 0, (void *)&g_MpCharacterMenuDialog }, // "Character"
  	{ MENUITEMTYPE_SELECTABLE, 0, MENUITEMFLAG_SELECTABLE_OPENSDIALOG, L_MPMENU_033, 0, (void *)&g_MpControlMenuDialog }, // "Control"
 diff --git a/port/src/optionsmenu.c b/port/src/optionsmenu.c
-index 76cceaa09..d7b302bb1 100644
+index 76cceaa09..af4bee419 100644
 --- a/port/src/optionsmenu.c
 +++ b/port/src/optionsmenu.c
-@@ -2620,7 +2620,7 @@ static MenuItemHandlerResult menuhandlerBind(s32 operation, struct menuitem *ite
+@@ -445,7 +445,7 @@ struct menuitem g_ExtendedStickMenuItems[] = {
+ 		0,
+ 		MENUITEMFLAG_LITERAL_TEXT | MENUITEMFLAG_SLIDER_WIDE,
+ 		(uintptr_t)"LStick Scale X",
+-		20,
++		40,
+ 		menuhandlerStickSpeed,
+ 	},
+ 	{
+@@ -453,7 +453,7 @@ struct menuitem g_ExtendedStickMenuItems[] = {
+ 		0,
+ 		MENUITEMFLAG_LITERAL_TEXT | MENUITEMFLAG_SLIDER_WIDE,
+ 		(uintptr_t)"LStick Scale Y",
+-		20,
++		40,
+ 		menuhandlerStickSpeed,
+ 	},
+ 	{
+@@ -461,7 +461,7 @@ struct menuitem g_ExtendedStickMenuItems[] = {
+ 		0,
+ 		MENUITEMFLAG_LITERAL_TEXT | MENUITEMFLAG_SLIDER_WIDE,
+ 		(uintptr_t)"RStick Scale X",
+-		20,
++		40,
+ 		menuhandlerStickSpeed,
+ 	},
+ 	{
+@@ -469,7 +469,7 @@ struct menuitem g_ExtendedStickMenuItems[] = {
+ 		0,
+ 		MENUITEMFLAG_LITERAL_TEXT | MENUITEMFLAG_SLIDER_WIDE,
+ 		(uintptr_t)"RStick Scale Y",
+-		20,
++		40,
+ 		menuhandlerStickSpeed,
+ 	},
+ 	{
+@@ -554,11 +554,15 @@ static MenuItemHandlerResult menuhandlerStickSpeed(s32 operation, struct menuite
+ 	const s32 axis = idx % 2;
+ 
+ 	switch (operation) {
++	// 0 to 2.0 in steps of 0.05, with the value shown
+ 	case MENUOP_GETSLIDER:
+-		data->slider.value = inputControllerGetAxisScale(g_ExtMenuPlayer, stick, axis) * 10.f + 0.5f;
++		data->slider.value = inputControllerGetAxisScale(g_ExtMenuPlayer, stick, axis) * 20.f + 0.5f;
+ 		break;
+ 	case MENUOP_SET:
+-		inputControllerSetAxisScale(g_ExtMenuPlayer, stick, axis, (f32)data->slider.value / 10.f);
++		inputControllerSetAxisScale(g_ExtMenuPlayer, stick, axis, (f32)data->slider.value / 20.f);
++		break;
++	case MENUOP_GETSLIDERLABEL:
++		sprintf(data->slider.label, "%.2f", (f32)data->slider.value / 20.f);
+ 		break;
+ 	}
+ 
+@@ -2620,7 +2624,7 @@ static MenuItemHandlerResult menuhandlerBind(s32 operation, struct menuitem *ite
  	case MENUOP_GETOPTIONTEXT:
  		binds = inputKeyGetBinds(g_ExtMenuPlayer, menuBinds[idx].ck);
  		if (binds && binds[data->dropdown.value]) {
@@ -4732,7 +4786,7 @@ index 76cceaa09..d7b302bb1 100644
  			for (char *p = keyname; *p; ++p) {
  				if (*p == '_') *p = ' ';
  			}
-@@ -4619,7 +4619,7 @@ static MenuItemHandlerResult menuhandlerModBind(s32 operation, struct menuitem *
+@@ -4619,7 +4623,7 @@ static MenuItemHandlerResult menuhandlerModBind(s32 operation, struct menuitem *
  	case MENUOP_GETOPTIONTEXT:
  		binds = inputKeyGetBinds(g_ExtMenuPlayer, modMenuBinds[idx].ck);
  		if (binds && binds[data->dropdown.value]) {
@@ -4741,7 +4795,7 @@ index 76cceaa09..d7b302bb1 100644
  			for (char *p = keyname; *p; ++p) {
  				if (*p == '_') *p = ' ';
  			}
-@@ -5059,7 +5059,7 @@ static MenuItemHandlerResult menuhandlerModKeyBind(s32 operation, struct menuite
+@@ -5059,7 +5063,7 @@ static MenuItemHandlerResult menuhandlerModKeyBind(s32 operation, struct menuite
  		break;
  	case MENUOP_GETOPTIONTEXT:
  		if (vk > 0) {
@@ -4750,7 +4804,7 @@ index 76cceaa09..d7b302bb1 100644
  			keyname[sizeof(keyname) - 1] = '\0';
  			for (char *p = keyname; *p; ++p) {
  				if (*p == '_') *p = ' ';
-@@ -7928,7 +7928,244 @@ struct menudialogdef g_ExtendedAdvancedMenuDialog = {
+@@ -7928,7 +7932,244 @@ struct menudialogdef g_ExtendedAdvancedMenuDialog = {
  	NULL,
  };
  

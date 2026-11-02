@@ -8,6 +8,9 @@
   setting, auto-aim and the rest) and the MUSIC and FX sliders are saved to pd.ini when the watch
   closes, and come back at the next mission. Before, they went back to the defaults every time
   the game started.
+- **Finer stick settings.** The four Stick Scale sliders on the Analog Stick Settings page move in
+  steps of 0.05 instead of 0.1 and show the number, so you can see you're on 0.40 or 0.65. The
+  range is the same as before.
 
 ## 1.3.0 (2026-11-02)
 
