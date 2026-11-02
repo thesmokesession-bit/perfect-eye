@@ -1173,7 +1173,7 @@ index 40ca395cb..525cde808 100644
  	s32 auth;           // send X-Ghost-User and X-Ghost-Pin
  	// Follow a redirect rather than treating one as the reply. Off for the
 diff --git a/port/include/input.h b/port/include/input.h
-index a15376e4c..ce83dd567 100644
+index a15376e4c..c8a6f7a95 100644
 --- a/port/include/input.h
 +++ b/port/include/input.h
 @@ -123,6 +123,9 @@ enum mouselockmode {
@@ -1186,7 +1186,17 @@ index a15376e4c..ce83dd567 100644
  
  // read the specified player's inputs into the N64 pad struct
  // returns 0 if read, non-0 if failed
-@@ -211,6 +214,16 @@ s32 inputGetKeyByName(const char *name);
+@@ -204,6 +207,9 @@ s32 inputButtonPressed(s32 idx, u32 contbtn);
+ // if bind is -1, picks a bind slot automatically
+ void inputKeyBind(s32 idx, u32 ck, s32 bind, u32 vk);
+ 
++// renewed every frame by a menu: pad idx's L1, R1 and L2 read as L, R and Z
++void inputSetMenuShoulders(s32 idx);
++
+ const u32 *inputKeyGetBinds(s32 idx, u32 ck);
+ 
+ // get VK_ value from human-readable name
+@@ -211,6 +217,16 @@ s32 inputGetKeyByName(const char *name);
  
  // get human-readable name from VK_ value
  const char *inputGetKeyName(s32 vk);
@@ -1889,7 +1899,7 @@ index cc7420715..1d6b3cdef 100644
  		return tile;
  	}
 diff --git a/port/src/gewatch.c b/port/src/gewatch.c
-index c7a00483a..66b99fea5 100644
+index c7a00483a..abd165045 100644
 --- a/port/src/gewatch.c
 +++ b/port/src/gewatch.c
 @@ -58,6 +58,7 @@
@@ -2040,7 +2050,16 @@ index c7a00483a..66b99fea5 100644
  /**
   * The control styles the control screen lists: GoldenEye's four one-pad
   * styles, its four two-pad ones when a second pad is in (D_800409D8), and
-@@ -5626,7 +5697,7 @@ static Gfx *watchDrawControlLabels(Gfx *gdl, s32 mode)
+@@ -2398,6 +2469,8 @@ static void watchTickInput(void)
+ 	const s32 settled = !watchPageTurning();
+ 	const s32 num = g_Vars.currentplayerstats ? g_Vars.currentplayerstats->mpindex : 0;
+ 
++	// L1 and R1 turn the pages and L2 is OK while the watch is up
++	inputSetMenuShoulders(watchPadNum());
+ 	watchTickLatches();
+ 
+ 	if (watchPressedStart() || (watchPressedBack() && !g_Watch.selected)) {
+@@ -5626,7 +5699,7 @@ static Gfx *watchDrawControlLabels(Gfx *gdl, s32 mode)
  {
  	const u8 *cs;
  	const s32 holding = g_Watch.controlrow == 1 && g_Watch.selected;
@@ -2049,6 +2068,15 @@ index c7a00483a..66b99fea5 100644
  	const char *dir1 = watchString(upright ? STR_UP : STR_DOWN);
  	const char *dir2 = watchString(upright ? STR_DOWN : STR_UP);
  	s32 movesight = 0;
+@@ -6160,6 +6233,8 @@ static void watchMpTick(void)
+ 		return;
+ 	}
+ 
++	inputSetMenuShoulders(pad);
++
+ 	// Start (or Esc, the keyboard's pause) put it away: with the overlay
+ 	// holding the pad the movement tick no longer sees it (geWatchMpHoldsInput()).
+ 	// Esc is read only while the overlay is up: inputKeyJustPressed() spends
 diff --git a/port/src/gexfront.c b/port/src/gexfront.c
 index f68bccb8f..e29a1e51b 100644
 --- a/port/src/gexfront.c
@@ -2866,7 +2894,7 @@ index ecfb59a65..167318cb1 100644
  
  	return 0;
 diff --git a/port/src/input.c b/port/src/input.c
-index a5e75de49..d12f44fc9 100644
+index a5e75de49..b34c65a7f 100644
 --- a/port/src/input.c
 +++ b/port/src/input.c
 @@ -13,6 +13,14 @@
@@ -3072,7 +3100,83 @@ index a5e75de49..d12f44fc9 100644
  s32 inputInit(void)
  {
  	if (g_NetDedicated) return 0;
-@@ -1368,12 +1550,489 @@ static inline void inputUpdateMouse(void)
+@@ -1137,6 +1319,48 @@ static s32 inputBindPressedNotKeys(const s32 idx, const u32 ck)
+ 	return 0;
+ }
+ 
++// inputSetMenuShoulders(): while a menu renews it every frame, the pad's L1, R1
++// and L2 stand for L, R and Z whatever they are bound to (GoldenEye's watch:
++// L1 and R1 turn its pages and L2 is OK, as R2 is). It lapses two frames after
++// the last renewal, so a menu closed by any path hands the binds back.
++static u32 inputFrame;
++static u32 menuShoulders[INPUT_MAX_CONTROLLERS];
++
++void inputSetMenuShoulders(s32 idx)
++{
++	if (idx >= 0 && idx < INPUT_MAX_CONTROLLERS) {
++		menuShoulders[idx] = inputFrame + 1;
++	}
++}
++
++static s32 inputMenuShouldersOn(s32 idx)
++{
++	return menuShoulders[idx] && inputFrame + 1 - menuShoulders[idx] < 2;
++}
++
++static const u32 menuShoulderButtons[3][2] = {
++	{ SDL_CONTROLLER_BUTTON_LEFTSHOULDER,  CK_LTRIG },
++	{ SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, CK_RTRIG },
++	{ VK_JOY1_LTRIG - VK_JOY1_BEGIN,       CK_ZTRIG },
++};
++
++// as inputBindPressed(), leaving out the pad's own L1, R1 and L2
++static s32 inputBindPressedNotShoulders(const s32 idx, const u32 ck)
++{
++	const u32 base = VK_JOY_BEGIN + idx * INPUT_MAX_CONTROLLER_BUTTONS;
++
++	for (s32 i = 0; i < INPUT_MAX_BINDS; ++i) {
++		const u32 vk = binds[idx][ck][i];
++
++		if (vk && vk != base + menuShoulderButtons[0][0] && vk != base + menuShoulderButtons[1][0]
++				&& vk != base + menuShoulderButtons[2][0] && inputKeyPressed(vk)) {
++			return 1;
++		}
++	}
++
++	return 0;
++}
++
+ // inputSetCancelExclusive(): the keys bound to cancel stand for cancel only,
+ // and stay so, once turned off, until each is let go
+ static s32 cancelExclusive[INPUT_MAX_CONTROLLERS];
+@@ -1240,11 +1464,13 @@ s32 inputReadController(s32 idx, OSContPad *npad)
+ 	}
+ 
+ 	const s32 cancelonly = cancelExclusive[idx] || cancelLatched[idx];
++	const s32 shoulders = !typing && inputMenuShouldersOn(idx);
+ 
+ 	for (u32 i = 0; i < CONT_NUM_BUTTONS; ++i) {
+ 		const s32 pressed = typing ? inputBindPressedNotKeys(idx, i)
+ 			: (cancelonly && i != CK_CANCEL)
+ 			? inputBindPressedNotCancel(idx, i)
++			: shoulders ? inputBindPressedNotShoulders(idx, i)
+ 			: inputBindPressed(idx, i);
+ 
+ 		if (pressed) {
+@@ -1252,6 +1478,12 @@ s32 inputReadController(s32 idx, OSContPad *npad)
+ 		}
+ 	}
+ 
++	for (s32 i = 0; shoulders && i < 3; ++i) {
++		if (inputKeyPressed(VK_JOY_BEGIN + idx * INPUT_MAX_CONTROLLER_BUTTONS + menuShoulderButtons[i][0])) {
++			npad->button |= 1U << menuShoulderButtons[i][1];
++		}
++	}
++
+ 	const s32 xdiff = typing ? inputBindPressedNotKeys(idx, CK_STICK_XPOS) - inputBindPressedNotKeys(idx, CK_STICK_XNEG)
+ 		: inputBindPressed(idx, CK_STICK_XPOS) - inputBindPressed(idx, CK_STICK_XNEG);
+ 	const s32 ydiff = typing ? inputBindPressedNotKeys(idx, CK_STICK_YPOS) - inputBindPressedNotKeys(idx, CK_STICK_YNEG)
+@@ -1368,11 +1600,489 @@ static inline void inputUpdateMouse(void)
  	}
  }
  
@@ -3550,7 +3654,8 @@ index a5e75de49..d12f44fc9 100644
  	if (g_NetDedicated) return;
  
  	SDL_GameControllerUpdate();
- 
++	++inputFrame;
++
 +#ifdef PLATFORM_PS5
 +	inputPs5UpdateLightBars();
 +	inputPs5UpdateKeyboardMouse();
@@ -3558,11 +3663,10 @@ index a5e75de49..d12f44fc9 100644
 +	inputPs5UpdateTriggers();
 +	inputPs5ImeUpdate();
 +#endif
-+
+ 
  	if (mouseEnabled) {
  		inputUpdateMouse();
- 	}
-@@ -1795,6 +2454,12 @@ void inputMouseGetScaledDelta(f32* dx, f32* dy)
+@@ -1795,6 +2505,12 @@ void inputMouseGetScaledDelta(f32* dx, f32* dy)
  		mdx = rawdx * (0.022f / 3.5f) * mouseSensX;
  		mdy = rawdy * (0.022f / 3.5f) * mouseSensY;
  	}
@@ -3575,7 +3679,7 @@ index a5e75de49..d12f44fc9 100644
  	if (dx) *dx = mdx;
  	if (dy) *dy = mdy;
  }
-@@ -1908,6 +2573,35 @@ const char *inputGetKeyName(s32 vk)
+@@ -1908,6 +2624,35 @@ const char *inputGetKeyName(s32 vk)
  	return vkNames[vk];
  }
  
@@ -3611,7 +3715,7 @@ index a5e75de49..d12f44fc9 100644
  s32 inputGetKeyByName(const char *name)
  {
  	s32 start = 0;
-@@ -1949,6 +2643,13 @@ void inputClearLastKey(void)
+@@ -1949,6 +2694,13 @@ void inputClearLastKey(void)
  
  s32 inputGetLastKey(void)
  {
@@ -3625,7 +3729,7 @@ index a5e75de49..d12f44fc9 100644
  	return lastKey;
  }
  
-@@ -1958,6 +2659,10 @@ void inputStartTextInput(void)
+@@ -1958,6 +2710,10 @@ void inputStartTextInput(void)
  	lastKey = 0;
  	textInput = 1;
  	SDL_StartTextInput();
@@ -3636,7 +3740,7 @@ index a5e75de49..d12f44fc9 100644
  }
  
  /**
-@@ -2069,6 +2774,14 @@ const char *inputGetClipboard(void)
+@@ -2069,6 +2825,14 @@ const char *inputGetClipboard(void)
  void inputStopTextInput(void)
  {
  	SDL_StopTextInput();
@@ -3651,7 +3755,7 @@ index a5e75de49..d12f44fc9 100644
  
  	if (textInput) {
  		const u8 *state = SDL_GetKeyboardState(NULL);
-@@ -2099,6 +2812,12 @@ u32 inputGetKeyModState(void)
+@@ -2099,6 +2863,12 @@ u32 inputGetKeyModState(void)
  PD_CONSTRUCTOR static void inputConfigInit(void)
  {
  	configRegisterInt("Input.MouseEnabled", &mouseEnabled, 0, 1);

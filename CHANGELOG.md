@@ -9,6 +9,9 @@
   a keyboard.
 - **PS5 button names on the online pages.** The hints at the bottom of the online pages name the
   DualSense's buttons (Cross, Circle, Triangle, Create, L2) instead of a PC's.
+- **GoldenEye's watch on the shoulder buttons.** While the watch is up, L1 turns to the page on the
+  left and R1 to the page on the right, and L2 is OK, as R2 is. Before, R1 turned left, L2 turned
+  right and L1 moved down a row. Out of the watch the buttons do what they did.
 
 ## 1.3.1 (2026-11-02)
 
