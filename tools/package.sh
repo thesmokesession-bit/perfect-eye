@@ -52,7 +52,7 @@ folder too gives the GoldenEye tile's pop-up menus their HD font."
 cp "$root/tools/ps5-push.command" "$root/tools/ps5-sync-saves.command" "$root/dist/"
 
 if $release; then
-    # contentVersion 01.002.000 -> 1.2.0
+    # contentVersion 01.003.000 -> 1.3.0
     version=$(python3 -c 'import json, sys; print(".".join(str(int(p)) for p in json.load(open(sys.argv[1]))["contentVersion"].split(".")))' "$root/sce_sys/param.json")
     zip="$root/dist/PerfectEye-$version.zip"
     rm -f "$zip"

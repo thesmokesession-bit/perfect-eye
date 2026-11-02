@@ -1,6 +1,6 @@
 # Update notes
 
-## 1.3.0 (unreleased)
+## 1.3.0 (2026-11-02)
 
 - **GoldenEye's cheats.** Beat a mission's target time on its difficulty (or a harder one) and
   you win its cheat, as on the cartridge: Paintball Mode, Invincibility, DK Mode, Turbo Mode,
