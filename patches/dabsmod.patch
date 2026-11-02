@@ -5735,35 +5735,6 @@ index a62b148e4..ccfebe042 100644
  
  	if (out->tried < 0 || !out->rgba) {
  		return NULL;
-diff --git a/port/src/xblaimport.c b/port/src/xblaimport.c
-index 17d61fc36..5f010c52b 100644
---- a/port/src/xblaimport.c
-+++ b/port/src/xblaimport.c
-@@ -461,6 +461,24 @@ static void xblaDetect(void)
- 		}
- 	}
- 
-+#ifdef PLATFORM_PS5
-+	{
-+		// The GoldenEye tile borrows the Perfect Dark tile's copy (its own added-content first,
-+		// above): the menus' HD font is the package's, and without it the GoldenEye tile's
-+		// pop-up pages drew the N64 font stretched to 4K (2026-11-02). One copy is enough.
-+		extern s32 g_Ps5GoldenEyeTile;
-+		char path[FS_MAXPATH + 1];
-+		static char pdtile[] = "/data/homebrew/PPSA64007/added-content";
-+
-+		if (g_Ps5GoldenEyeTile
-+				&& ((xblaScanDir(pdtile, 0, XBLAIMPORT_SCAN_DEPTH, path, sizeof(path)) && xblaTryPath(path))
-+					|| (xblaScanDir(pdtile, 1, XBLAIMPORT_SCAN_DEPTH, path, sizeof(path)) && xblaTryPath(path)))) {
-+			sysLogPrintf(LOG_NOTE, "xbla: the Perfect Dark tile's package: %s", path);
-+			return;
-+		}
-+	}
-+#endif
-+
- 	for (s32 r = 0; r < ARRAYCOUNT(roots); r++) {
- 		const char *root = fsFullPath(roots[r]);
- 		char path[FS_MAXPATH + 1];
 diff --git a/src/game/bondmove.c b/src/game/bondmove.c
 index 41fc439cd..e528c23f9 100644
 --- a/src/game/bondmove.c

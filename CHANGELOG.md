@@ -13,10 +13,6 @@
 - **The PS5 Settings page has Analog Stick Settings and GoldenEye: Locked Progression**, so the
   GoldenEye tile can change both without editing pd.ini. Locked Progression opens GoldenEye's
   missions one at a time, as on the cartridge.
-- **Sharp menu text on the GoldenEye tile.** Its pop-up pages (Cheats, PS5 Settings, Check for
-  Updates, online) drew the N64's small font stretched to 4K. With Perfect Dark's Xbox 360 package in
-  the Perfect Dark tile's `added-content/`, the GoldenEye tile now uses it too for the HD font, so
-  one copy covers both tiles.
 - **Sharp menu text on the GoldenEye tile:** its pop-up pages (Cheats, PS5 Settings, Check for
   Updates, online) use the HD font from Perfect Dark's Xbox 360 package, so put a copy of that
   package in `PPSA64008/added-content/` too. Without it they draw the N64's small font, which looks
