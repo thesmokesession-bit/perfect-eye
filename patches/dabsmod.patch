@@ -1126,7 +1126,7 @@ index 651f6c31f..2d1cb89a1 100644
  /**
   * The release's own set of one of GoldenEye's two fonts - gothic 0 for Zurich
 diff --git a/port/include/gexfront.h b/port/include/gexfront.h
-index 827edc653..ea9aa9cbb 100644
+index 827edc653..11f73112f 100644
 --- a/port/include/gexfront.h
 +++ b/port/include/gexfront.h
 @@ -19,6 +19,10 @@
@@ -1140,6 +1140,15 @@ index 827edc653..ea9aa9cbb 100644
  // the stick GoldenEye's screens read: the further pushed of a pad's two
  s32 gexMenuStickX(s32 player);
  s32 gexMenuStickY(s32 player);
+@@ -69,7 +73,7 @@ s32 gexFrontHidesLevel(void);
+ // set by schedConsiderScreenshot() while a menu backdrop waits for a frame with the level in it
+ extern s32 g_MenuBlurDeferred;
+ 
+-// Mod.GePlusLockedProgression: GoldenEye's missions open by completion (off: all open)
++// Mod.GePlusLockedProgression: GoldenEye's missions open by completion, on by default (off: all open, cheats too)
+ s32 gexFrontGetLockedProgression(void);
+ void gexFrontSetLockedProgression(s32 on);
+ // Mod.GePlusRegion: the release whose rules GE Plus plays by (US ships)
 @@ -183,4 +187,13 @@ Gfx *gexFrontFillRect(Gfx *gdl, s32 x1, s32 y1, s32 x2, s32 y2, u32 colour);
  // Text broken into lines no wider than `width`, in GoldenEye's own units
  void gexFrontTextWrap(s32 gothic, const char *text, char *out, size_t len, s32 width);
@@ -2078,7 +2087,7 @@ index c7a00483a..abd165045 100644
  	// holding the pad the movement tick no longer sees it (geWatchMpHoldsInput()).
  	// Esc is read only while the overlay is up: inputKeyJustPressed() spends
 diff --git a/port/src/gexfront.c b/port/src/gexfront.c
-index f68bccb8f..5205912ba 100644
+index f68bccb8f..7b34d1cdb 100644
 --- a/port/src/gexfront.c
 +++ b/port/src/gexfront.c
 @@ -77,6 +77,7 @@
@@ -2102,23 +2111,29 @@ index f68bccb8f..5205912ba 100644
  /**
   * GoldenEye's mission folder (front.c's mission_folder_setup_entries): its nine
   * chapter headings and, under each, its missions, in the order the folder gives
-@@ -772,11 +779,13 @@ static u16 g_BestTimes[NUM_MISSIONS][NUM_DIFFICULTIES];
+@@ -771,12 +778,17 @@ static u16 g_BestTimes[NUM_MISSIONS][NUM_DIFFICULTIES];
+ 
  /**
   * Mod.GePlusLockedProgression: GoldenEye's locked progression - missions and
-  * difficulties open by completion (frontMissionStatus()). Off, as it ships:
+- * difficulties open by completion (frontMissionStatus()). Off, as it ships:
 - * every mission is open at every difficulty, and 007 by PD Mode's rule as
 - * before; on, 007 also opens GoldenEye's way (all twenty on 00 Agent).
-+ * every mission is open at every difficulty, 007 included, so a player who
-+ * finds Agent too hard can turn the enemies down (a Reddit player, 1.3.3); on,
-+ * 007 opens GoldenEye's way (all twenty on 00 Agent) or by PD Mode's rule.
++ * difficulties open by completion (frontMissionStatus()). On, as it ships
++ * since 1.3.3 (a pd.ini from before keeps its own value): 007 opens
++ * GoldenEye's way (all twenty on 00 Agent) or by PD Mode's rule, and each
++ * cheat by its target time. Off: every mission is open at every difficulty,
++ * 007 included, so a player who finds Agent too hard can turn the enemies
++ * down (a Reddit player), and every cheat is won, there being nothing left to
++ * earn.
   * The ticks for completed difficulties show either way.
   */
- static s32 g_GePlusLockedProgression = 0;
+-static s32 g_GePlusLockedProgression = 0;
++static s32 g_GePlusLockedProgression = 1;
 +static s32 g_GePlusCheats = 0; // Mod.GePlusCheats: GoldenEye's cheats switched on, a bit a mission
  
  /**
   * Mod.GePlusRegion: which of GoldenEye's releases GE Plus plays by - 0 the
-@@ -804,6 +813,7 @@ static s32 g_GePlusRevisionFixes = 1;
+@@ -804,6 +816,7 @@ static s32 g_GePlusRevisionFixes = 1;
  PD_CONSTRUCTOR static void gexFrontConfigInit(void)
  {
  	configRegisterInt("Mod.GePlusLockedProgression", &g_GePlusLockedProgression, 0, 1);
@@ -2126,7 +2141,7 @@ index f68bccb8f..5205912ba 100644
  	configRegisterInt("Mod.GePlusRegion", &g_GePlusRegion, 0, GEREGION_COUNT - 1);
  	configRegisterInt("Mod.GePlusRevisionFixes", &g_GePlusRevisionFixes, 0, 1);
  }
-@@ -885,9 +895,9 @@ static s32 front007Unlocked(void)
+@@ -885,9 +898,9 @@ static s32 front007Unlocked(void)
  		return 1;
  	}
  
@@ -2138,7 +2153,7 @@ index f68bccb8f..5205912ba 100644
  	}
  
  	for (mission = 0; mission < frontNumMissions(); mission++) {
-@@ -1328,6 +1338,119 @@ static void frontSaveBestTimes(void)
+@@ -1328,6 +1341,124 @@ static void frontSaveBestTimes(void)
  	fsFileFree(f);
  }
  
@@ -2184,6 +2199,11 @@ index f68bccb8f..5205912ba 100644
 +{
 +	if (frontIsHack() || i < 0 || i >= NUM_MISSIONS) {
 +		return 0;
++	}
++
++	// with the progression off everything is open, the cheats too
++	if (!g_GePlusLockedProgression) {
++		return 1;
 +	}
 +
 +	frontLoadBestTimes();
@@ -2258,7 +2278,7 @@ index f68bccb8f..5205912ba 100644
  /**
   * A font's glyphs are drawn straight out of its file's buffer, and the
   * renderer keeps a texture by its address alone (not its size): a font freed
-@@ -1591,7 +1714,8 @@ static s32 frontMusic(void)
+@@ -1591,7 +1722,8 @@ static s32 frontMusic(void)
  
  s32 gexFrontMusic(void)
  {
@@ -2268,7 +2288,7 @@ index f68bccb8f..5205912ba 100644
  }
  
  /* ---- the stages --------------------------------------------------------- */
-@@ -1856,6 +1980,39 @@ static void frontBuildCharacters(void)
+@@ -1856,6 +1988,39 @@ static void frontBuildCharacters(void)
  	}
  }
  
@@ -2308,7 +2328,7 @@ index f68bccb8f..5205912ba 100644
  /* ---- the setup ---------------------------------------------------------- */
  
  // GoldenEye's scenarios in its own order, as the remake's
-@@ -2612,9 +2769,23 @@ static void frontSetCursorForMission(s32 mission);
+@@ -2612,9 +2777,23 @@ static void frontSetCursorForMission(s32 mission);
  static s32 frontMissionUnderCursor(void);
  static void frontOpenExtra(s32 row);
  
@@ -2333,7 +2353,7 @@ index f68bccb8f..5205912ba 100644
  
  // What a row of the Cinema's second page is: GECINEMA_OPENING and
  // GECINEMA_ENDING, then these
-@@ -2931,10 +3102,85 @@ static void frontOpenMonitors(void)
+@@ -2931,10 +3110,85 @@ static void frontOpenMonitors(void)
  	g_Front.cursory = 134.0f + 70.0f * ((g_Front.monitor % TVS_PER_PAGE) / 4) + 11.0f;
  }
  
@@ -2420,7 +2440,7 @@ index f68bccb8f..5205912ba 100644
  	}
  
  	if (back || (pick && g_Front.tabprev)) {
-@@ -2951,6 +3197,32 @@ static void frontTickExtra(s32 pick, s32 back)
+@@ -2951,6 +3205,32 @@ static void frontTickExtra(s32 pick, s32 back)
  		frontSfx(GESFX_DOOR_METAL_CLOSE2, MENUSOUND_SELECT);
  		frontOpenMonitors();
  	}
@@ -2453,7 +2473,7 @@ index f68bccb8f..5205912ba 100644
  }
  
  /**
-@@ -3820,6 +4092,24 @@ void gexFrontTick(void)
+@@ -3820,6 +4100,24 @@ void gexFrontTick(void)
  		inputMouseHideCursorThisFrame();
  	}
  
@@ -2478,7 +2498,7 @@ index f68bccb8f..5205912ba 100644
  	frontTickScreen();
  
  	// A page GoldenEye opens puts the cursor on its first choice (the
-@@ -3914,6 +4204,23 @@ static void frontTickScreen(void)
+@@ -3914,6 +4212,23 @@ static void frontTickScreen(void)
  			g_Front.highlight = g_Front.cursory >= 275.0f ? 2 : g_Front.cursory >= 243.0f ? 1 : 0;
  		}
  
@@ -2502,7 +2522,7 @@ index f68bccb8f..5205912ba 100644
  		if (back || (pick && g_Front.tabprev)) {
  			frontSfx(GESFX_DOOR_METAL_CLOSE2, MENUSOUND_TOGGLEOFF);
  			frontClose();
-@@ -3975,6 +4282,66 @@ s32 gexFrontIsActive(void)
+@@ -3975,6 +4290,66 @@ s32 gexFrontIsActive(void)
  	return g_Front.active;
  }
  
@@ -2569,7 +2589,7 @@ index f68bccb8f..5205912ba 100644
  s32 gexFrontOpen(void)
  {
  	g_FrontLeaving = 0;
-@@ -5580,9 +5947,23 @@ void gexFrontTextWrap(s32 gothic, const char *text, char *out, size_t len, s32 w
+@@ -5580,9 +5955,23 @@ void gexFrontTextWrap(s32 gothic, const char *text, char *out, size_t len, s32 w
  }
  
  /** frontAddStartTabText() and frontAddPreviousTabText(): Bank Gothic, turned, a tab's middle. */
@@ -2593,7 +2613,7 @@ index f68bccb8f..5205912ba 100644
  	s32 width;
  	s32 height;
  	s32 v;
-@@ -5980,8 +6361,11 @@ static void frontWidenBackdrop(void)
+@@ -5980,8 +6369,11 @@ static void frontWidenBackdrop(void)
   */
  static Gfx *frontDrawReleaseBackdrop(Gfx *gdl)
  {
@@ -2606,7 +2626,7 @@ index f68bccb8f..5205912ba 100644
  	if (!tile) {
  		return gdl;
  	}
-@@ -6815,7 +7199,7 @@ static Gfx *frontDrawMission(Gfx *gdl)
+@@ -6815,7 +7207,7 @@ static Gfx *frontDrawMission(Gfx *gdl)
  /** EXTRA: the difficulty page's rows again, with no mission over them. */
  static Gfx *frontDrawExtra(Gfx *gdl)
  {
@@ -2615,7 +2635,7 @@ index f68bccb8f..5205912ba 100644
  
  	gdl = frontPrint(gdl, 0x37, 0x8f, langTr("EXTRA:\n"), COLOUR_ON);
  
-@@ -6824,7 +7208,7 @@ static Gfx *frontDrawExtra(Gfx *gdl)
+@@ -6824,7 +7216,7 @@ static Gfx *frontDrawExtra(Gfx *gdl)
  		gdl = frontTextSetup(gdl);
  	}
  
@@ -2624,7 +2644,7 @@ index f68bccb8f..5205912ba 100644
  		char num[8];
  
  		snprintf(num, sizeof(num), "%d.\n", i + 1);
-@@ -7590,6 +7974,12 @@ static Gfx *frontDrawStats(Gfx *gdl)
+@@ -7590,6 +7982,12 @@ static Gfx *frontDrawStats(Gfx *gdl)
  		}
  
  		gdl = frontPrint(gdl, 0x82, 0xa9 + line, buf, COLOUR_ON);
@@ -4952,7 +4972,7 @@ index e743746e0..ba503992d 100644
  	{ MENUITEMTYPE_SELECTABLE, 0, MENUITEMFLAG_SELECTABLE_OPENSDIALOG, L_MPMENU_031, 0, (void *)&g_MpCharacterMenuDialog }, // "Character"
  	{ MENUITEMTYPE_SELECTABLE, 0, MENUITEMFLAG_SELECTABLE_OPENSDIALOG, L_MPMENU_033, 0, (void *)&g_MpControlMenuDialog }, // "Control"
 diff --git a/port/src/optionsmenu.c b/port/src/optionsmenu.c
-index 76cceaa09..fdfbe1f5a 100644
+index 76cceaa09..7c8e8d04c 100644
 --- a/port/src/optionsmenu.c
 +++ b/port/src/optionsmenu.c
 @@ -445,7 +445,7 @@ struct menuitem g_ExtendedStickMenuItems[] = {
@@ -5041,8 +5061,8 @@ index 76cceaa09..fdfbe1f5a 100644
  /**
   * "GE Plus: Locked Progression": GoldenEye's missions and difficulties open
 - * one by one as they are completed, as GoldenEye's own. Off, all are open.
-+ * one by one as they are completed, as GoldenEye's own. Off, all are open,
-+ * 007 included.
++ * one by one as they are completed, as GoldenEye's own (on as it ships).
++ * Off, all are open, 007 and every cheat included.
   */
  static MenuItemHandlerResult menuhandlerGePlusLocked(s32 operation, struct menuitem *item, union handlerdata *data)
  {
