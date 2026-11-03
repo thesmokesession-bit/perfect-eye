@@ -1,5 +1,15 @@
 # Update notes
 
+## Unreleased
+
+- **GoldenEye's 007 mode is open from the start.** With GoldenEye: Locked Progression off (as it
+  ships), every mission can be played on 007, where you set the enemies' health, damage, accuracy
+  and reaction speed yourself. Turn enemy health and damage down to play the story easier than
+  Agent. Before, 007 only opened after beating every mission on 00 Agent. With Locked Progression
+  on, it still opens GoldenEye's way.
+- **A time set on 007 no longer wins a cheat.** GoldenEye's cheats are won on Agent, Secret Agent
+  or 00 Agent only, since 007's sliders can make a mission as easy as you like.
+
 ## 1.3.2 (2026-11-02)
 
 - **Chat with a controller.** Triangle opens the chat on the Briefing Room (the Main Menu Chat in the
