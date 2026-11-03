@@ -4972,7 +4972,7 @@ index e743746e0..ba503992d 100644
  	{ MENUITEMTYPE_SELECTABLE, 0, MENUITEMFLAG_SELECTABLE_OPENSDIALOG, L_MPMENU_031, 0, (void *)&g_MpCharacterMenuDialog }, // "Character"
  	{ MENUITEMTYPE_SELECTABLE, 0, MENUITEMFLAG_SELECTABLE_OPENSDIALOG, L_MPMENU_033, 0, (void *)&g_MpControlMenuDialog }, // "Control"
 diff --git a/port/src/optionsmenu.c b/port/src/optionsmenu.c
-index 76cceaa09..7c8e8d04c 100644
+index 76cceaa09..c9eaff790 100644
 --- a/port/src/optionsmenu.c
 +++ b/port/src/optionsmenu.c
 @@ -445,7 +445,7 @@ struct menuitem g_ExtendedStickMenuItems[] = {
@@ -5066,7 +5066,7 @@ index 76cceaa09..7c8e8d04c 100644
   */
  static MenuItemHandlerResult menuhandlerGePlusLocked(s32 operation, struct menuitem *item, union handlerdata *data)
  {
-@@ -7928,7 +7933,244 @@ struct menudialogdef g_ExtendedAdvancedMenuDialog = {
+@@ -7928,7 +7933,247 @@ struct menudialogdef g_ExtendedAdvancedMenuDialog = {
  	NULL,
  };
  
@@ -5177,9 +5177,12 @@ index 76cceaa09..7c8e8d04c 100644
 +	return 0;
 +}
 +
++// Saved at every close, not only the first: the PS5's home screen closes the
++// game without cleanup()'s save, so a setting changed here after the first
++// start (Xbox 360 Look, a player on Reddit, 1.3.4) was gone at the next start.
 +static MenuDialogHandlerResult menudialogPs5Setup(s32 operation, struct menudialogdef *dialogdef, union handlerdata *data)
 +{
-+	if (operation == MENUOP_CLOSE && !g_Ps5SetupDone) {
++	if (operation == MENUOP_CLOSE) {
 +		g_Ps5SetupDone = 1;
 +		configSave(CONFIG_PATH);
 +	}

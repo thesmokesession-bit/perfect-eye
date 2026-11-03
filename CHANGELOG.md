@@ -1,5 +1,12 @@
 # Update notes
 
+## Unreleased
+
+- **PS5 Settings stay changed after you close the game.** Changes made on the PS5 Settings page
+  after the first start (Xbox 360 Look, the display mode, the texture pack and the rest) are saved
+  as soon as you leave the page. Before, they were only saved when the game shut down on its own,
+  which closing it from the PS5's home screen skips, so they were lost.
+
 ## 1.3.4 (2026-11-03)
 
 - **No more slowdown when a menu page opens.** Opening a page in the menus (Options, the pause
