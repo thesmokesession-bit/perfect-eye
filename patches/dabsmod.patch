@@ -6554,7 +6554,7 @@ index ea7811d68..a83d0fde0 100644
  			updatenoticeMainMenuTick(dialogdef, data->dialog2.inputs, false);
  #endif
 diff --git a/src/game/menu.c b/src/game/menu.c
-index 1279d1766..73b7753a3 100644
+index 1279d1766..d3cdf6692 100644
 --- a/src/game/menu.c
 +++ b/src/game/menu.c
 @@ -12,6 +12,7 @@
@@ -6565,26 +6565,18 @@ index 1279d1766..73b7753a3 100644
  #include "net/net.h"
  #endif
  #include "../lib/naudio/n_sndp.h"
-@@ -1683,8 +1684,18 @@ void menuOpenDialog(struct menudialogdef *dialogdef, struct menudialog *dialog,
+@@ -1683,6 +1684,10 @@ void menuOpenDialog(struct menudialogdef *dialogdef, struct menudialog *dialog,
  	dialog->height = dialog->dstheight;
  }
  
-+#ifdef PLATFORM_PS5
-+void ps5Trace(s32 frames, const char *fmt, ...); // ps5_platform.c
-+#endif
-+
++// The PS5 build once traced the 30 frames after a page opened to its watch
++// file (the online Player Setup's crash, fixed in 1.0.0). Each line opened,
++// wrote and closed /app0/pd-watch.log, which held the menus to 16 fps for
++// two seconds on a player's console (pd.log, 1.3.3), so it is gone.
  void menuPushDialog(struct menudialogdef *dialogdef)
  {
-+#ifdef PLATFORM_PS5
-+	// the frames after a page opens, traced to the watch file: a page whose
-+	// opening ended the game with no signal (the online Player Setup)
-+	ps5Trace(30, "menu: page %p opens (%s)", dialogdef,
-+			dialogdef && (dialogdef->flags & MENUDIALOGFLAG_LITERAL_TEXT) && dialogdef->title ? (char *)dialogdef->title : "-");
-+#endif
  #ifndef PLATFORM_N64
- 	// Prevent the mouse from immediately changing a slider's value, as was
- 	// happening while entering the Audio menu.
-@@ -4421,6 +4432,8 @@ u32 g_MenuCThresh = 120;
+@@ -4421,6 +4426,8 @@ u32 g_MenuCThresh = 120;
  
  Gfx *menuRenderDialog(Gfx *gdl, struct menudialog *dialog, struct menu *menu, bool lightweight)
  {
@@ -6593,7 +6585,7 @@ index 1279d1766..73b7753a3 100644
  #ifndef PLATFORM_N64
  	const s32 side = netLobbyMenuDialogAlign(dialog->definition);
  #endif
-@@ -4599,6 +4612,36 @@ Gfx *menuRenderDialogs(Gfx *gdl)
+@@ -4599,6 +4606,36 @@ Gfx *menuRenderDialogs(Gfx *gdl)
  	}
  #endif
  
@@ -6630,7 +6622,7 @@ index 1279d1766..73b7753a3 100644
  	return menuRenderDialogsInner(gdl);
  }
  
-@@ -6313,6 +6356,10 @@ Gfx *menuRenderBackgroundLayer2(Gfx *gdl, u8 bg, f32 frac)
+@@ -6313,6 +6350,10 @@ Gfx *menuRenderBackgroundLayer2(Gfx *gdl, u8 bg, f32 frac)
  
  Gfx *menuRender(Gfx *gdl)
  {
@@ -6641,7 +6633,7 @@ index 1279d1766..73b7753a3 100644
  	static u32 usepiece = 1;
  
  	g_MpPlayerNum = 0;
-@@ -6331,6 +6378,10 @@ Gfx *menuRender(Gfx *gdl)
+@@ -6331,6 +6372,10 @@ Gfx *menuRender(Gfx *gdl)
  	// and health bar would be drawn over the folder and are left out.
  	bool overfront = false;
  
@@ -6652,7 +6644,7 @@ index 1279d1766..73b7753a3 100644
  	if (geIntroIsActive()) {
  		gdl = geIntroRender(gdl);
  
-@@ -6382,6 +6433,9 @@ Gfx *menuRender(Gfx *gdl)
+@@ -6382,6 +6427,9 @@ Gfx *menuRender(Gfx *gdl)
  		gDPFillRectangle(gdl++, viGetViewLeft(), viGetViewTop(),
  				viGetViewLeft() + viGetViewWidth() + 1, viGetViewTop() + viGetViewHeight() + 2);
  		gDPPipeSync(gdl++);
@@ -6662,7 +6654,7 @@ index 1279d1766..73b7753a3 100644
  	} else
  #endif
  	if (g_MenuData.nextbg != 255) {
-@@ -6410,7 +6464,7 @@ Gfx *menuRender(Gfx *gdl)
+@@ -6410,7 +6458,7 @@ Gfx *menuRender(Gfx *gdl)
  	}
  
  #ifndef PLATFORM_N64
@@ -6671,7 +6663,7 @@ index 1279d1766..73b7753a3 100644
  #else
  	if (IS8MB() && g_MenuData.unk5d4) {
  #endif
-@@ -6498,8 +6552,8 @@ Gfx *menuRender(Gfx *gdl)
+@@ -6498,8 +6546,8 @@ Gfx *menuRender(Gfx *gdl)
  	// Render the second layer of the background (for the combat simulator cone,
  	// which draws over the top of the hud piece)
  #ifndef PLATFORM_N64
