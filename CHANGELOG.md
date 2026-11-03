@@ -1,6 +1,6 @@
 # Update notes
 
-## Unreleased
+## 1.3.3 (2026-11-02)
 
 - **GoldenEye: Locked Progression is on for new players.** Missions open one at a time as you beat
   them, as on the cartridge. A game that already has the setting saved keeps it. Turn it off under
