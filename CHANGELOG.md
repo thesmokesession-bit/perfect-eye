@@ -1,6 +1,6 @@
 # Update notes
 
-## Unreleased
+## 1.3.2 (2026-11-02)
 
 - **Chat with a controller.** Triangle opens the chat on the Briefing Room (the Main Menu Chat in the
   bottom right) and in a room's Game Lobby, in both Perfect Dark and GoldenEye. The PS5's own
