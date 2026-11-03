@@ -1,6 +1,6 @@
 # Update notes
 
-## Unreleased
+## 1.3.5 (2026-11-03)
 
 - **PS5 Settings stay changed after you close the game.** Changes made on the PS5 Settings page
   after the first start (Xbox 360 Look, the display mode, the texture pack and the rest) are saved
