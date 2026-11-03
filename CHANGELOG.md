@@ -1,10 +1,11 @@
 # Update notes
 
-## Unreleased
+## 1.3.4 (2026-11-03)
 
 - **No more slowdown when a menu page opens.** Opening a page in the menus (Options, the pause
-  menu, Extended Options) dropped the game to about 16 fps for two seconds. It was debug logging
-  left over from 1.0, writing to a file for 30 frames after each page opened. It's gone.
+  menu, Extended Options) could drop the game to about 16 fps for two seconds on some consoles.
+  It was debug logging left over from 1.0, writing to a file for 30 frames after each page opened.
+  It's gone.
 
 ## 1.3.3 (2026-11-02)
 
