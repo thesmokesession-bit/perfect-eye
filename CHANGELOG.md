@@ -1,5 +1,12 @@
 # Update notes
 
+## 1.3.6 (2026-11-24)
+
+- **GoldenEye: a control style picked on the watch stays after a restart.** The watch's CONTROL
+  page changed the style but didn't save it the way the multiplayer folder does, so the game could
+  switch back to another style the next time it started. Pick the last style on the list for
+  dual-stick controls: the left stick moves and strafes, and the right stick turns and aims.
+
 ## 1.3.5 (2026-11-03)
 
 - **PS5 Settings stay changed after you close the game.** Changes made on the PS5 Settings page

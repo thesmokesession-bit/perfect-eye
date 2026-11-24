@@ -1908,7 +1908,7 @@ index cc7420715..1d6b3cdef 100644
  		return tile;
  	}
 diff --git a/port/src/gewatch.c b/port/src/gewatch.c
-index c7a00483a..abd165045 100644
+index c7a00483a..231f2a45c 100644
 --- a/port/src/gewatch.c
 +++ b/port/src/gewatch.c
 @@ -58,6 +58,7 @@
@@ -2068,7 +2068,23 @@ index c7a00483a..abd165045 100644
  	watchTickLatches();
  
  	if (watchPressedStart() || (watchPressedBack() && !g_Watch.selected)) {
-@@ -5626,7 +5699,7 @@ static Gfx *watchDrawControlLabels(Gfx *gdl, s32 mode)
+@@ -2463,7 +2536,14 @@ static void watchTickInput(void)
+ 					0, 10, &g_Watch.stylesettled);
+ 
+ 			if (g_Watch.styleindex != before) {
+-				optionsSetControlMode(num, watchStyleMode(g_Watch.styleindex));
++				const s32 mode = watchStyleMode(g_Watch.styleindex);
++
++				// the save keeps PC as 1.1 and pd.ini's ExtendedControls says which
++				// it was, so both change together, as on the folder (gexfront.c's
++				// frontSetControlStyle()); before, a style picked here was undone at
++				// the next start (a player on Reddit, 1.3.6)
++				optionsSetControlMode(num, mode);
++				g_PlayerExtCfg[num & 3].extcontrols = mode == CONTROLMODE_PC;
+ 				g_Vars.modifiedfiles |= MODFILE_GAME;
+ 			}
+ 		}
+@@ -5626,7 +5706,7 @@ static Gfx *watchDrawControlLabels(Gfx *gdl, s32 mode)
  {
  	const u8 *cs;
  	const s32 holding = g_Watch.controlrow == 1 && g_Watch.selected;
@@ -2077,7 +2093,7 @@ index c7a00483a..abd165045 100644
  	const char *dir1 = watchString(upright ? STR_UP : STR_DOWN);
  	const char *dir2 = watchString(upright ? STR_DOWN : STR_UP);
  	s32 movesight = 0;
-@@ -6160,6 +6233,8 @@ static void watchMpTick(void)
+@@ -6160,6 +6240,8 @@ static void watchMpTick(void)
  		return;
  	}
  
