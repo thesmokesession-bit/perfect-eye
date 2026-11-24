@@ -1,5 +1,23 @@
 # Update notes
 
+## 1.4.0 (2026-11-24)
+
+- **Sounds from the controller's speaker.** The DualSense's own speaker plays a tick when you use
+  GoldenEye's watch, a chime when you pick something up, a clack when you reload and a click when
+  you fire an empty gun. Turn it off with **Controller Speaker** on the PS5 Settings page.
+- **Rumble for each kind of gun.** Each shot rumbles the way the gun's trigger feels: the shotgun
+  and launchers kick hard, the Magnum gives a sharp jolt, and automatics buzz while they fire.
+  Explosions rumble too, harder the closer they are. The Rumble setting still sets how strong it is.
+- **Fades between screens.** Going into a mission and coming back out fades to black and back
+  instead of cutting.
+- **A finished first-start screen.** While GoldenEye's levels are converted on the first start,
+  the screen shows a wider progress bar, the percentage and about how long is left.
+- **A missing ROM is explained on the TV.** If the Perfect Dark ROM is missing or isn't the right
+  one, or the GoldenEye tile has no GoldenEye ROM, a page says what's wrong and which folder the ROM
+  goes in. Before, the game closed with only a notification.
+- **No more offer to go back a version.** A new version that started before its own release was
+  out could offer the one before it as an update for a few hours. Now the game checks again.
+
 ## 1.3.6 (2026-11-24)
 
 - **GoldenEye: a control style picked on the watch stays after a restart.** The watch's CONTROL

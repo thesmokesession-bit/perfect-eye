@@ -1163,6 +1163,32 @@ index 827edc653..11f73112f 100644
 +#define GECHEAT_NORADAR   6
 +
  #endif
+diff --git a/port/include/gexplusrom.h b/port/include/gexplusrom.h
+index 0ca9a2498..25cb282e5 100644
+--- a/port/include/gexplusrom.h
++++ b/port/include/gexplusrom.h
+@@ -78,12 +78,19 @@ s32 gexPlusRomReadNames(void (*fn)(void *arg, int kind, int num, const char *fil
+ 
+ /**
+  * The startup notice the conversion draws - black, a title, a line under it and
+- * a bar of done out of total - as one frame, for other work done once before
++ * a bar of done out of total, the percentage and the time left - as one frame, for other work done once before
+  * the game's own fonts are loaded (gebeanUnpackAtStartup()). Upper case,
+- * digits and - . / only.
++ * digits and - . / ( ) , : ' % _ ! only.
+  */
+ void gexPlusRomNotice(const char *title, const char *line, s32 done, s32 total);
+ 
++/**
++ * A page in the same font: a title, a body wrapped to fit and a line at the
++ * foot, as one frame. For a setup error before the game's fonts are loaded
++ * (system.c). Lower case is drawn as upper case.
++ */
++void gexPlusRomNoticePage(const char *title, const char *body, const char *foot);
++
+ #ifdef __cplusplus
+ }
+ #endif
 diff --git a/port/include/ghostnet.h b/port/include/ghostnet.h
 index 40ca395cb..525cde808 100644
 --- a/port/include/ghostnet.h
@@ -1182,7 +1208,7 @@ index 40ca395cb..525cde808 100644
  	s32 auth;           // send X-Ghost-User and X-Ghost-Pin
  	// Follow a redirect rather than treating one as the reply. Off for the
 diff --git a/port/include/input.h b/port/include/input.h
-index a15376e4c..c8a6f7a95 100644
+index a15376e4c..78d0a94c8 100644
 --- a/port/include/input.h
 +++ b/port/include/input.h
 @@ -123,6 +123,9 @@ enum mouselockmode {
@@ -1205,7 +1231,7 @@ index a15376e4c..c8a6f7a95 100644
  const u32 *inputKeyGetBinds(s32 idx, u32 ck);
  
  // get VK_ value from human-readable name
-@@ -211,6 +217,16 @@ s32 inputGetKeyByName(const char *name);
+@@ -211,6 +217,23 @@ s32 inputGetKeyByName(const char *name);
  
  // get human-readable name from VK_ value
  const char *inputGetKeyName(s32 vk);
@@ -1218,10 +1244,32 @@ index a15376e4c..c8a6f7a95 100644
 +void inputGyroGetDelta(s32 cidx, f32 *dx, f32 *dy);
 +extern s32 g_InputPs5Gyro;     // Input.PS5Gyro
 +extern s32 g_InputPs5Triggers; // Input.PS5AdaptiveTriggers
++// the system user whose pad controller cidx is, -1 when not known
++s32 inputPs5UserId(s32 cidx);
++// a short sound of its own on the DualSense speaker of a player's pad
++// (port/src/padspeaker.c)
++enum { PADSPK_WATCH, PADSPK_PICKUP, PADSPK_RELOAD, PADSPK_EMPTY };
++void padSpeakerPlay(s32 playernum, s32 sound);
++extern s32 g_InputPs5PadSpeaker; // Input.PS5PadSpeaker
 +#endif
  
  // get CK_ value from human-readable name
  s32 inputGetContKeyByName(const char *name);
+@@ -220,6 +243,14 @@ const char *inputGetContKeyName(u32 ck);
+ 
+ // strength is 0 .. 1; 0 strength turns it off
+ void inputRumble(s32 idx, f32 strength, f32 time);
++// the heavy (lo) and light (hi) motors apart, each 0 .. 1
++void inputRumbleMotors(s32 idx, f32 lo, f32 hi, f32 time);
++#ifdef PLATFORM_PS5
++// the current player's shot from handnum (1 if it rumbled its own way), and an
++// explosion's shake (viShake's amount)
++s32 inputPs5ShotRumble(s32 handnum);
++void inputPs5ShakeRumble(f32 shake);
++#endif
+ 
+ f32 inputRumbleGetStrength(s32 cidx);
+ void inputRumbleSetStrength(s32 cidx, f32 val);
 diff --git a/port/include/killfeed.h b/port/include/killfeed.h
 index 0f995ee50..b90c5abaf 100644
 --- a/port/include/killfeed.h
@@ -1908,7 +1956,7 @@ index cc7420715..1d6b3cdef 100644
  		return tile;
  	}
 diff --git a/port/src/gewatch.c b/port/src/gewatch.c
-index c7a00483a..231f2a45c 100644
+index c7a00483a..67fe97e6e 100644
 --- a/port/src/gewatch.c
 +++ b/port/src/gewatch.c
 @@ -58,6 +58,7 @@
@@ -1938,7 +1986,17 @@ index c7a00483a..231f2a45c 100644
  	g_Watch.loaded = 1;
  	g_Watch.state = WS_CLOSED;
  	g_Watch.owner = 0;
-@@ -1783,6 +1789,13 @@ static void watchSetPaused(s32 paused)
+@@ -1367,6 +1373,9 @@ static void watchStrikeStatic(void)
+ static void watchBeep(void)
+ {
+ 	watchSfx(GESFX_CAMERA_BEEP1, MENUSOUND_FOCUS);
++#ifdef PLATFORM_PS5
++	padSpeakerPlay(g_Watch.owner, PADSPK_WATCH); // and a tick in the hands
++#endif
+ 
+ 	// D_80040B10 is 0xf800: static when a random word is over 0xf8000000,
+ 	// and only on the solo watch, the multiplayer one having a beep alone
+@@ -1783,6 +1792,13 @@ static void watchSetPaused(s32 paused)
  
  	g_Watch.paused = paused;
  
@@ -1952,7 +2010,7 @@ index c7a00483a..231f2a45c 100644
  	// online the level is everyone's - the host's world, or a client's copy
  	// of it - and the watch never stops it: the player whose watch it is
  	// stands still under it instead (geWatchMpHoldsInput(), and a client's
-@@ -2212,12 +2225,47 @@ static const struct watchoption g_Options[] = {
+@@ -2212,12 +2228,47 @@ static const struct watchoption g_Options[] = {
  
  #define NUM_OPTIONS ((s32)(sizeof(g_Options) / sizeof(g_Options[0])))
  
@@ -2001,7 +2059,7 @@ index c7a00483a..231f2a45c 100644
  	case 1: return optionsGetAutoAim(num) ? 1 : 0;
  	case 2: return optionsGetAimControl(num) ? 1 : 0;
  	case 3: return optionsGetSightOnScreen(num) ? 1 : 0;
-@@ -2230,12 +2278,10 @@ static s32 watchOptionValue(s32 row)
+@@ -2230,12 +2281,10 @@ static s32 watchOptionValue(s32 row)
  	return 0;
  }
  
@@ -2016,7 +2074,7 @@ index c7a00483a..231f2a45c 100644
  	case 1: optionsSetAutoAim(num, value != 0); break;
  	case 2: optionsSetAimControl(num, value); break;
  	case 3: optionsSetSightOnScreen(num, value != 0); break;
-@@ -2244,7 +2290,12 @@ static void watchSetOptionValue(s32 row, s32 value)
+@@ -2244,7 +2293,12 @@ static void watchSetOptionValue(s32 row, s32 value)
  	case 6: optionsSetScreenSize(value); break;
  	case 7: optionsSetScreenRatio(value); break;
  	}
@@ -2029,7 +2087,7 @@ index c7a00483a..231f2a45c 100644
  	g_Vars.modifiedfiles |= MODFILE_GAME;
  }
  
-@@ -2297,9 +2348,29 @@ static void watchAdjustVolume(s32 row)
+@@ -2297,9 +2351,29 @@ static void watchAdjustVolume(s32 row)
  		sndSetSfxVolume((u16)v);
  	}
  
@@ -2059,7 +2117,7 @@ index c7a00483a..231f2a45c 100644
  /**
   * The control styles the control screen lists: GoldenEye's four one-pad
   * styles, its four two-pad ones when a second pad is in (D_800409D8), and
-@@ -2398,6 +2469,8 @@ static void watchTickInput(void)
+@@ -2398,6 +2472,8 @@ static void watchTickInput(void)
  	const s32 settled = !watchPageTurning();
  	const s32 num = g_Vars.currentplayerstats ? g_Vars.currentplayerstats->mpindex : 0;
  
@@ -2068,7 +2126,7 @@ index c7a00483a..231f2a45c 100644
  	watchTickLatches();
  
  	if (watchPressedStart() || (watchPressedBack() && !g_Watch.selected)) {
-@@ -2463,7 +2536,14 @@ static void watchTickInput(void)
+@@ -2463,7 +2539,14 @@ static void watchTickInput(void)
  					0, 10, &g_Watch.stylesettled);
  
  			if (g_Watch.styleindex != before) {
@@ -2084,7 +2142,7 @@ index c7a00483a..231f2a45c 100644
  				g_Vars.modifiedfiles |= MODFILE_GAME;
  			}
  		}
-@@ -5626,7 +5706,7 @@ static Gfx *watchDrawControlLabels(Gfx *gdl, s32 mode)
+@@ -5626,7 +5709,7 @@ static Gfx *watchDrawControlLabels(Gfx *gdl, s32 mode)
  {
  	const u8 *cs;
  	const s32 holding = g_Watch.controlrow == 1 && g_Watch.selected;
@@ -2093,7 +2151,7 @@ index c7a00483a..231f2a45c 100644
  	const char *dir1 = watchString(upright ? STR_UP : STR_DOWN);
  	const char *dir2 = watchString(upright ? STR_DOWN : STR_UP);
  	s32 movesight = 0;
-@@ -6160,6 +6240,8 @@ static void watchMpTick(void)
+@@ -6160,6 +6243,8 @@ static void watchMpTick(void)
  		return;
  	}
  
@@ -2674,10 +2732,315 @@ index f68bccb8f..7b34d1cdb 100644
  		gdl = frontPrint(gdl, 0x37, 0xa9 + line, frontString(TITLE_BESTTIME), COLOUR_ON);
  		snprintf(buf, sizeof(buf), "%02d:%02d", best / 60, best % 60);
 diff --git a/port/src/gexplusrom.c b/port/src/gexplusrom.c
-index 1907f81fe..ebb17da0d 100644
+index 1907f81fe..5a93487b3 100644
 --- a/port/src/gexplusrom.c
 +++ b/port/src/gexplusrom.c
-@@ -578,6 +578,12 @@ static void gexPlusRomConvertGoldenEye(void)
+@@ -174,9 +174,17 @@ static const struct {
+ 	{ '-', { 0x00, 0x00, 0x00, 0x1f, 0x00, 0x00, 0x00 } },
+ 	{ '.', { 0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x0c } },
+ 	{ '/', { 0x01, 0x01, 0x02, 0x04, 0x08, 0x10, 0x10 } },
++	{ '(', { 0x02, 0x04, 0x08, 0x08, 0x08, 0x04, 0x02 } },
++	{ ')', { 0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08 } },
++	{ ',', { 0x00, 0x00, 0x00, 0x00, 0x0c, 0x04, 0x08 } },
++	{ ':', { 0x00, 0x0c, 0x0c, 0x00, 0x0c, 0x0c, 0x00 } },
++	{ '\'', { 0x04, 0x04, 0x08, 0x00, 0x00, 0x00, 0x00 } },
++	{ '%', { 0x18, 0x19, 0x02, 0x04, 0x08, 0x13, 0x03 } },
++	{ '_', { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f } },
++	{ '!', { 0x04, 0x04, 0x04, 0x04, 0x04, 0x00, 0x04 } },
+ };
+ 
+-#define NOTICE_MAX_GFX 4096
++#define NOTICE_MAX_GFX 8192
+ 
+ static Gfx g_NoticeGfx[NOTICE_MAX_GFX];
+ static u16 g_NoticeColourImage[4]; // any address that is not the depth buffer's
+@@ -194,16 +202,26 @@ static Gfx *noticeRect(Gfx *gdl, s32 x0, s32 y0, s32 x1, s32 y1)
+ 	return gdl;
+ }
+ 
+-static Gfx *noticeText(Gfx *gdl, const char *text, s32 y)
++// the width of text at scale (each glyph 5 wide and a gap of 1)
++static s32 noticeWidth(const char *text, s32 scale)
++{
++	const s32 len = (s32)strlen(text);
++	return len > 0 ? (len * 6 - 1) * scale : 0;
++}
++
++// text from x (or centred on the screen when x < 0), lower case drawn as upper
++static Gfx *noticeTextAt(Gfx *gdl, const char *text, s32 x, s32 y, s32 scale)
+ {
+-	const s32 width = (s32)strlen(text) * 6 - 1;
+-	s32 x = (320 - width) / 2;
++	if (x < 0) {
++		x = (320 - noticeWidth(text, scale)) / 2;
++	}
+ 
+-	for (const char *p = text; *p; ++p, x += 6) {
++	for (const char *p = text; *p; ++p, x += 6 * scale) {
++		const char ch = (*p >= 'a' && *p <= 'z') ? *p - 'a' + 'A' : *p;
+ 		const u8 *rows = NULL;
+ 
+ 		for (u32 i = 0; i < ARRAYCOUNT(g_Glyphs); ++i) {
+-			if (g_Glyphs[i].c == *p) {
++			if (g_Glyphs[i].c == ch) {
+ 				rows = g_Glyphs[i].rows;
+ 				break;
+ 			}
+@@ -227,7 +245,7 @@ static Gfx *noticeText(Gfx *gdl, const char *text, s32 y)
+ 					++end;
+ 				}
+ 
+-				gdl = noticeRect(gdl, x + c, y + r, x + end, y + r);
++				gdl = noticeRect(gdl, x + c * scale, y + r * scale, x + (end + 1) * scale - 1, y + (r + 1) * scale - 1);
+ 				c = end + 1;
+ 			}
+ 		}
+@@ -236,11 +254,24 @@ static Gfx *noticeText(Gfx *gdl, const char *text, s32 y)
+ 	return gdl;
+ }
+ 
+-void gexPlusRomNotice(const char *title, const char *line, s32 done, s32 total)
++static Gfx *noticeText(Gfx *gdl, const char *text, s32 y)
++{
++	return noticeTextAt(gdl, text, -1, y, 1);
++}
++
++// a title twice the size where it fits, the normal size where it does not
++static Gfx *noticeTitle(Gfx *gdl, const char *title, s32 y)
++{
++	if (noticeWidth(title, 2) <= 296) {
++		return noticeTextAt(gdl, title, -1, y, 2);
++	}
++
++	return noticeTextAt(gdl, title, -1, y + 4, 1);
++}
++
++static Gfx *noticeBegin(void)
+ {
+ 	Gfx *gdl = g_NoticeGfx;
+-	const s32 barw = 160;
+-	const s32 fill = total > 0 ? barw * done / total : 0;
+ 
+ 	gDPSetColorImage(gdl++, G_IM_FMT_RGBA, G_IM_SIZ_16b, 320, g_NoticeColourImage);
+ 	gDPSetScissor(gdl++, G_SC_NON_INTERLACE, 0, 0, 320, 240);
+@@ -248,24 +279,182 @@ void gexPlusRomNotice(const char *title, const char *line, s32 done, s32 total)
+ 	gDPSetRenderMode(gdl++, G_RM_NOOP, G_RM_NOOP2);
+ 
+ 	gDPSetFillColor(gdl++, rgba5551(0, 0, 0));
+-	gdl = noticeRect(gdl, 0, 0, 319, 239);
++	return noticeRect(gdl, 0, 0, 319, 239);
++}
++
++static void noticeEnd(Gfx *gdl)
++{
++	gSPEndDisplayList(gdl++);
++
++	videoStartFrame();
++	videoSubmitCommands(g_NoticeGfx);
++	videoEndFrame();
++}
++
++#define NOTICE_BAR_X 40
++#define NOTICE_BAR_W 240
++
++// The time left, from the pace of the steps done so far: the time to the last
++// step a step, the steps to go at that, less what has passed since. Nothing
++// until two steps and three seconds have gone, when a guess means something.
++static void noticeTimeLeft(char *out, u32 outlen, const char *title, s32 done, s32 total)
++{
++	static char forTitle[64];
++	static s32 lastDone, lastTotal;
++	static u32 start, lastStep;
++	const u32 now = SDL_GetTicks();
++	s32 left;
++
++	out[0] = '\0';
++
++	if (strcmp(forTitle, title) || done < lastDone || total != lastTotal) {
++		snprintf(forTitle, sizeof(forTitle), "%s", title);
++		lastDone = done;
++		lastTotal = total;
++		start = lastStep = now;
++		return;
++	}
++
++	if (done != lastDone) {
++		lastDone = done;
++		lastStep = now;
++	}
++
++	if (done < 2 || total <= done || lastStep - start < 3000) {
++		return;
++	}
++
++	left = (s32)((f32)(lastStep - start) / done * (total - done)) - (s32)(now - lastStep);
++
++	if (left < 60000) {
++		snprintf(out, outlen, "UNDER A MINUTE LEFT");
++	} else {
++		snprintf(out, outlen, "ABOUT %d MIN LEFT", (left + 30000) / 60000);
++	}
++}
++
++void gexPlusRomNotice(const char *title, const char *line, s32 done, s32 total)
++{
++	Gfx *gdl = noticeBegin();
++	const u32 now = SDL_GetTicks();
++	const s32 y = 118;
++	char detail[40];
++	char pct[8] = "";
++	char left[32];
++
++	// the callers' own "ONCE ONLY - " is said by the line under the title now
++	if (!strncmp(line, "ONCE ONLY - ", 12)) {
++		line += 12;
++	}
++
++	snprintf(detail, sizeof(detail), "%s", line);
++
++	if (total > 0) {
++		snprintf(pct, sizeof(pct), "%d%%", done * 100 / total);
++	}
++
++	noticeTimeLeft(left, sizeof(left), title, done, total);
+ 
+ 	gDPSetFillColor(gdl++, rgba5551(255, 255, 255));
+-	gdl = noticeText(gdl, title, 100);
++	gdl = noticeTitle(gdl, title, 80);
++
++	gDPSetFillColor(gdl++, rgba5551(130, 130, 130));
++	gdl = noticeText(gdl, "ONLY THE FIRST TIME. LATER STARTS SKIP THIS.", 102);
++
++	// the bar: a thin frame, the part done, and a light that runs along it
++	// so a long step still shows the game at work
++	gDPSetFillColor(gdl++, rgba5551(110, 110, 110));
++	gdl = noticeRect(gdl, NOTICE_BAR_X - 2, y - 2, NOTICE_BAR_X + NOTICE_BAR_W + 1, y + 7);
++	gDPSetFillColor(gdl++, rgba5551(0, 0, 0));
++	gdl = noticeRect(gdl, NOTICE_BAR_X - 1, y - 1, NOTICE_BAR_X + NOTICE_BAR_W, y + 6);
++	gDPSetFillColor(gdl++, rgba5551(40, 34, 20));
++	gdl = noticeRect(gdl, NOTICE_BAR_X, y, NOTICE_BAR_X + NOTICE_BAR_W - 1, y + 5);
++
++	if (total > 0) {
++		const s32 fill = NOTICE_BAR_W * (done > total ? total : done) / total;
++		const s32 glow = (s32)(now / 8 % (u32)(NOTICE_BAR_W + 60)) - 30;
++
++		gDPSetFillColor(gdl++, rgba5551(200, 160, 40));
++		gdl = noticeRect(gdl, NOTICE_BAR_X, y, NOTICE_BAR_X + fill - 1, y + 5);
++
++		if (glow < fill) {
++			gDPSetFillColor(gdl++, rgba5551(255, 216, 120));
++			gdl = noticeRect(gdl, NOTICE_BAR_X + MAX(glow, 0), y, NOTICE_BAR_X + MIN(glow + 15, fill - 1), y + 5);
++		}
++	} else {
++		// nothing to count yet: a block that goes to and fro
++		const s32 span = NOTICE_BAR_W - 40;
++		s32 pos = (s32)(now / 6 % (u32)(span * 2));
++
++		if (pos > span) {
++			pos = span * 2 - pos;
++		}
++
++		gDPSetFillColor(gdl++, rgba5551(200, 160, 40));
++		gdl = noticeRect(gdl, NOTICE_BAR_X + pos, y, NOTICE_BAR_X + pos + 39, y + 5);
++	}
+ 
+ 	gDPSetFillColor(gdl++, rgba5551(160, 160, 160));
+-	gdl = noticeText(gdl, line, 114);
++	gdl = noticeTextAt(gdl, detail, NOTICE_BAR_X, y + 14, 1);
+ 
+-	gDPSetFillColor(gdl++, rgba5551(90, 90, 90));
+-	gdl = noticeRect(gdl, 80, 130, 80 + barw - 1, 133);
+-	gDPSetFillColor(gdl++, rgba5551(200, 160, 40));
+-	gdl = noticeRect(gdl, 80, 130, 80 + fill - 1, 133);
++	if (pct[0]) {
++		gDPSetFillColor(gdl++, rgba5551(230, 190, 80));
++		gdl = noticeTextAt(gdl, pct, NOTICE_BAR_X + NOTICE_BAR_W - noticeWidth(pct, 1), y + 14, 1);
++	}
+ 
+-	gSPEndDisplayList(gdl++);
++	if (left[0]) {
++		gDPSetFillColor(gdl++, rgba5551(110, 110, 110));
++		gdl = noticeText(gdl, left, y + 30);
++	}
+ 
+-	videoStartFrame();
+-	videoSubmitCommands(g_NoticeGfx);
+-	videoEndFrame();
++	noticeEnd(gdl);
++}
++
++void gexPlusRomNoticePage(const char *title, const char *body, const char *foot)
++{
++	Gfx *gdl;
++	char line[48];
++	s32 y = 96;
++
++	videoUpdateNativeResolution(320, 240);
++	gdl = noticeBegin();
++
++	gDPSetFillColor(gdl++, rgba5551(255, 255, 255));
++	gdl = noticeTitle(gdl, title, 66);
++
++	// the body a word at a time, a line as full as 45 characters (270 px) holds
++	gDPSetFillColor(gdl++, rgba5551(175, 175, 175));
++
++	while (*body && y < 200) {
++		s32 len = 0, brk = 0;
++
++		while (*body == ' ' || *body == '\n') {
++			++body;
++		}
++
++		while (body[len] && body[len] != '\n' && len < 45) {
++			if (body[len] == ' ') {
++				brk = len;
++			}
++			++len;
++		}
++
++		if (body[len] && body[len] != '\n' && body[len] != ' ' && brk > 0) {
++			len = brk;
++		}
++
++		snprintf(line, sizeof(line), "%.*s", len, body);
++		gdl = noticeText(gdl, line, y);
++		body += len;
++		y += 11;
++	}
++
++	if (foot && *foot) {
++		gDPSetFillColor(gdl++, rgba5551(230, 190, 80));
++		gdl = noticeText(gdl, foot, y + 14);
++	}
++
++	noticeEnd(gdl);
+ }
+ 
+ // what the notice says is being converted: GoldenEye itself or a ROM hack
+@@ -277,7 +466,7 @@ static void noticeDraw(s32 done, s32 total)
+ {
+ 	char line[64];
+ 
+-	snprintf(line, sizeof(line), "ONCE ONLY - %d/%d", done, total);
++	snprintf(line, sizeof(line), "%d OF %d DONE", done, total);
+ 	gexPlusRomNotice(g_NoticeTitle, line, done, total);
+ }
+ 
+@@ -531,6 +720,13 @@ static void gexPlusRomConvertGoldenEye(void)
+ 			}
+ 		}
+ 		sysLogPrintf(LOG_NOTE, "gexplus: no GoldenEye 007 (US) ROM in " FS_ADDED_CONTENT_DIR "/; GoldenEye has no arenas");
++#ifdef PLATFORM_PS5
++		// the GoldenEye tile has nothing to open without it: it landed on
++		// Perfect Dark's menu, which is not what the tile says it is
++		if (sysArgCheck("--ps5-goldeneye")) {
++			sysFatalSetupError("No GoldenEye ROM found. Put the GoldenEye 007 (USA) ROM in this title's folder.");
++		}
++#endif
+ 		return;
+ 	}
+ 
+@@ -578,6 +774,12 @@ static void gexPlusRomConvertGoldenEye(void)
  	}
  
  	sysLogPrintf(LOG_NOTE, "gexplus: converting %s into %s, this happens once", fsFullPath(search.path), dest);
@@ -2690,7 +3053,7 @@ index 1907f81fe..ebb17da0d 100644
  	snprintf(g_NoticeTitle, sizeof(g_NoticeTitle), "%s", NOTICE_TITLE_GOLDENEYE);
  
  	// a copy: fsFullPath()'s buffer is the next path's, and the stamp is written after many
-@@ -891,6 +897,12 @@ static void variantConvert(u8 *rom, u32 romlen, const char *name, const char *fr
+@@ -891,6 +1093,12 @@ static void variantConvert(u8 *rom, u32 romlen, const char *name, const char *fr
  
  	existed = fsFileSize(dest) >= 0;
  	sysLogPrintf(LOG_NOTE, "gexplus: converting %s (%s) into %s, this happens once", name, from, dest);
@@ -2955,10 +3318,10 @@ index ecfb59a65..167318cb1 100644
  
  	return 0;
 diff --git a/port/src/input.c b/port/src/input.c
-index a5e75de49..b34c65a7f 100644
+index a5e75de49..f3d678baa 100644
 --- a/port/src/input.c
 +++ b/port/src/input.c
-@@ -13,6 +13,14 @@
+@@ -13,6 +13,15 @@
  #include "utils.h"
  #include "system.h"
  #include "fs.h"
@@ -2969,11 +3332,12 @@ index a5e75de49..b34c65a7f 100644
 +#include "game/radar.h"
 +#include "game/options.h"
 +#include "game/game_0b0fd0.h"
++#include "lib/joy.h"
 +#endif
  
  #if !SDL_VERSION_ATLEAST(2, 0, 14)
  // this was added in 2.0.14
-@@ -124,6 +132,152 @@ static s32 textQueueLen = 0;
+@@ -124,6 +133,152 @@ static s32 textQueueLen = 0;
  
  static char *clipboardText = NULL;
  
@@ -3126,7 +3490,7 @@ index a5e75de49..b34c65a7f 100644
  static const char *ckNames[CK_TOTAL_COUNT] = {
  	"R_CBUTTONS",
  	"L_CBUTTONS",
-@@ -1020,6 +1174,34 @@ static inline void inputLoadBinds(void)
+@@ -1020,6 +1175,34 @@ static inline void inputLoadBinds(void)
  	inputSaveBinds();
  }
  
@@ -3161,7 +3525,7 @@ index a5e75de49..b34c65a7f 100644
  s32 inputInit(void)
  {
  	if (g_NetDedicated) return 0;
-@@ -1137,6 +1319,48 @@ static s32 inputBindPressedNotKeys(const s32 idx, const u32 ck)
+@@ -1137,6 +1320,48 @@ static s32 inputBindPressedNotKeys(const s32 idx, const u32 ck)
  	return 0;
  }
  
@@ -3210,7 +3574,7 @@ index a5e75de49..b34c65a7f 100644
  // inputSetCancelExclusive(): the keys bound to cancel stand for cancel only,
  // and stay so, once turned off, until each is let go
  static s32 cancelExclusive[INPUT_MAX_CONTROLLERS];
-@@ -1240,11 +1464,13 @@ s32 inputReadController(s32 idx, OSContPad *npad)
+@@ -1240,11 +1465,13 @@ s32 inputReadController(s32 idx, OSContPad *npad)
  	}
  
  	const s32 cancelonly = cancelExclusive[idx] || cancelLatched[idx];
@@ -3224,7 +3588,7 @@ index a5e75de49..b34c65a7f 100644
  			: inputBindPressed(idx, i);
  
  		if (pressed) {
-@@ -1252,6 +1478,12 @@ s32 inputReadController(s32 idx, OSContPad *npad)
+@@ -1252,6 +1479,12 @@ s32 inputReadController(s32 idx, OSContPad *npad)
  		}
  	}
  
@@ -3237,7 +3601,7 @@ index a5e75de49..b34c65a7f 100644
  	const s32 xdiff = typing ? inputBindPressedNotKeys(idx, CK_STICK_XPOS) - inputBindPressedNotKeys(idx, CK_STICK_XNEG)
  		: inputBindPressed(idx, CK_STICK_XPOS) - inputBindPressed(idx, CK_STICK_XNEG);
  	const s32 ydiff = typing ? inputBindPressedNotKeys(idx, CK_STICK_YPOS) - inputBindPressedNotKeys(idx, CK_STICK_YNEG)
-@@ -1368,11 +1600,489 @@ static inline void inputUpdateMouse(void)
+@@ -1368,11 +1601,499 @@ static inline void inputUpdateMouse(void)
  	}
  }
  
@@ -3273,6 +3637,7 @@ index a5e75de49..b34c65a7f 100644
 +s32 g_InputPs5Gyro = 1;      // Input.PS5Gyro
 +static f32 gyroSpeed = 1.0f;     // Input.PS5GyroSpeed: 1 turns the view as far as the pad turns
 +static s32 gyroHandle[4] = { -1, -1, -1, -1 };
++static s32 gyroUser[4] = { -1, -1, -1, -1 }; // the system user each pad is, for its speaker
 +static SDL_GameController *gyroFor[4];
 +static f32 gyroPrev[4][4];
 +static s32 gyroHavePrev[4];
@@ -3286,6 +3651,8 @@ index a5e75de49..b34c65a7f 100644
 +	char name[64];
 +	const char *want = SDL_GameControllerName(pads[i]);
 +
++	gyroUser[i] = -1;
++
 +	if (!want || sceUserServiceGetLoginUserIdList(users) != 0) {
 +		return -1;
 +	}
@@ -3293,6 +3660,8 @@ index a5e75de49..b34c65a7f 100644
 +	for (s32 u = 0; u < 4; u++) {
 +		if (users[u] != -1 && sceUserServiceGetUserName(users[u], name, sizeof(name)) == 0 && !strcmp(name, want)) {
 +			const s32 h = scePadGetHandle(users[u], 0, 0);
++
++			gyroUser[i] = users[u];
 +
 +			if (h >= 0) {
 +				const s32 r = scePadSetMotionSensorState(h, 1);
@@ -3305,6 +3674,11 @@ index a5e75de49..b34c65a7f 100644
 +	}
 +
 +	return -1;
++}
++
++s32 inputPs5UserId(s32 cidx)
++{
++	return cidx >= 0 && cidx < 4 && cidx < INPUT_MAX_CONTROLLERS && pads[cidx] ? gyroUser[cidx] : -1;
 +}
 +
 +static void inputPs5UpdateGyro(void)
@@ -3727,7 +4101,120 @@ index a5e75de49..b34c65a7f 100644
  
  	if (mouseEnabled) {
  		inputUpdateMouse();
-@@ -1795,6 +2505,12 @@ void inputMouseGetScaledDelta(f32* dx, f32* dy)
+@@ -1408,6 +2129,11 @@ s32 inputRumbleSupported(s32 idx)
+ }
+ 
+ void inputRumble(s32 idx, f32 strength, f32 time)
++{
++	inputRumbleMotors(idx, strength, strength, time);
++}
++
++void inputRumbleMotors(s32 idx, f32 lo, f32 hi, f32 time)
+ {
+ 	if (idx < 0 || idx >= INPUT_MAX_CONTROLLERS || !pads[idx]) {
+ 		return;
+@@ -1418,17 +2144,94 @@ void inputRumble(s32 idx, f32 strength, f32 time)
+ 	}
+ 
+ 	if (padsCfg[idx].rumbleOn) {
+-		strength *= padsCfg[idx].rumbleScale;
+-		if (strength <= 0.f) {
+-			strength = 0.f;
+-			time = 0.f;
++		lo = fmaxf(fminf(lo, 1.f), 0.f) * padsCfg[idx].rumbleScale;
++		hi = fmaxf(fminf(hi, 1.f), 0.f) * padsCfg[idx].rumbleScale;
++		if (lo <= 0.f && hi <= 0.f) {
++			lo = hi = time = 0.f;
+ 		} else {
+-			strength *= 65535.f;
+ 			time *= 1000.f;
+ 		}
+-		SDL_GameControllerRumble(pads[idx], (u16)strength, (u16)strength, (u32)time);
++		SDL_GameControllerRumble(pads[idx], (u16)(lo * 65535.f), (u16)(hi * 65535.f), (u32)time);
++	}
++}
++
++#ifdef PLATFORM_PS5
++// the pad of the player being ticked, when it is this console's to rumble
++static s32 inputPs5CurrentPad(void)
++{
++	s32 pad, pad2;
++
++	joyGetContpadNumsForPlayer(g_Vars.currentplayernum, &pad, &pad2);
++
++	if (pad < 0 || pad >= INPUT_MAX_CONTROLLERS || !pads[pad]
++			|| (g_NetMode != NETMODE_NONE && !netIsLocalPad(pad))) {
++		return -1;
++	}
++
++	return pad;
++}
++
++/**
++ * Each shot's rumble, matched to the trigger (inputPs5TriggersFor): the N64
++ * gave every gun the same 0.2 second pulse (bgunRumble's pakRumble). The
++ * heavy motor (lo) is the gun's weight, the light one (hi) its snap. Melee and
++ * throwing keep the N64's pulse (0 returned).
++ */
++s32 inputPs5ShotRumble(s32 handnum)
++{
++	struct hand *hand = &g_Vars.currentplayer->hands[handnum];
++	struct weaponfunc *func = gsetGetWeaponFunction2(&hand->gset);
++	const s32 type = func ? func->type : INVENTORYFUNCTYPE_NONE;
++	const s32 pad = inputPs5CurrentPad();
++	f32 lo, hi, ms;
++
++	switch (weaponHost(hand->gset.weaponnum)) {
++	case WEAPON_SHOTGUN:
++		lo = 1.f; hi = 0.7f; ms = 170;
++		break;
++	case WEAPON_DY357MAGNUM:
++	case WEAPON_DY357LX:
++		lo = 0.8f; hi = 0.9f; ms = 120;
++		break;
++	case WEAPON_SNIPERRIFLE:
++	case WEAPON_FARSIGHT:
++		lo = 0.6f; hi = 0.9f; ms = 130;
++		break;
++	case WEAPON_ROCKETLAUNCHER:
++	case WEAPON_SLAYER:
++	case WEAPON_DEVASTATOR:
++		lo = 1.f; hi = 0.4f; ms = 240;
++		break;
++	default:
++		if (type == INVENTORYFUNCTYPE_SHOOT_AUTOMATIC) {
++			lo = 0.2f; hi = 0.5f; ms = 50; // one a shot: a buzz while it fires
++		} else if (type == INVENTORYFUNCTYPE_SHOOT_PROJECTILE) {
++			lo = 0.9f; hi = 0.4f; ms = 200;
++		} else if ((type & 0xff) == INVENTORYFUNCTYPE_SHOOT) {
++			lo = 0.35f; hi = 0.7f; ms = 80;
++		} else {
++			return 0;
++		}
++	}
++
++	if (pad >= 0) {
++		inputRumbleMotors(pad, lo, hi, ms / 1000.f);
++	}
++
++	return 1;
++}
++
++// an explosion's shake felt as well as seen, as big as the shake (viShake's)
++void inputPs5ShakeRumble(f32 shake)
++{
++	const s32 pad = inputPs5CurrentPad();
++	const f32 amount = fabsf(shake) / 150.f;
++
++	if (pad >= 0 && amount > 0.03f) {
++		inputRumbleMotors(pad, amount, amount * 0.3f, 0.1f);
+ 	}
+ }
++#endif
+ 
+ f32 inputRumbleGetStrength(s32 cidx)
+ {
+@@ -1795,6 +2598,12 @@ void inputMouseGetScaledDelta(f32* dx, f32* dy)
  		mdx = rawdx * (0.022f / 3.5f) * mouseSensX;
  		mdy = rawdy * (0.022f / 3.5f) * mouseSensY;
  	}
@@ -3740,7 +4227,7 @@ index a5e75de49..b34c65a7f 100644
  	if (dx) *dx = mdx;
  	if (dy) *dy = mdy;
  }
-@@ -1908,6 +2624,35 @@ const char *inputGetKeyName(s32 vk)
+@@ -1908,6 +2717,35 @@ const char *inputGetKeyName(s32 vk)
  	return vkNames[vk];
  }
  
@@ -3776,7 +4263,7 @@ index a5e75de49..b34c65a7f 100644
  s32 inputGetKeyByName(const char *name)
  {
  	s32 start = 0;
-@@ -1949,6 +2694,13 @@ void inputClearLastKey(void)
+@@ -1949,6 +2787,13 @@ void inputClearLastKey(void)
  
  s32 inputGetLastKey(void)
  {
@@ -3790,7 +4277,7 @@ index a5e75de49..b34c65a7f 100644
  	return lastKey;
  }
  
-@@ -1958,6 +2710,10 @@ void inputStartTextInput(void)
+@@ -1958,6 +2803,10 @@ void inputStartTextInput(void)
  	lastKey = 0;
  	textInput = 1;
  	SDL_StartTextInput();
@@ -3801,7 +4288,7 @@ index a5e75de49..b34c65a7f 100644
  }
  
  /**
-@@ -2069,6 +2825,14 @@ const char *inputGetClipboard(void)
+@@ -2069,6 +2918,14 @@ const char *inputGetClipboard(void)
  void inputStopTextInput(void)
  {
  	SDL_StopTextInput();
@@ -3816,7 +4303,7 @@ index a5e75de49..b34c65a7f 100644
  
  	if (textInput) {
  		const u8 *state = SDL_GetKeyboardState(NULL);
-@@ -2099,6 +2863,12 @@ u32 inputGetKeyModState(void)
+@@ -2099,6 +2956,12 @@ u32 inputGetKeyModState(void)
  PD_CONSTRUCTOR static void inputConfigInit(void)
  {
  	configRegisterInt("Input.MouseEnabled", &mouseEnabled, 0, 1);
@@ -3981,7 +4468,7 @@ index 88588d034..d3b8aba2d 100644
  		return gdl;
  	}
 diff --git a/port/src/main.c b/port/src/main.c
-index 52d3fdc46..4306a505a 100644
+index 52d3fdc46..2806758d2 100644
 --- a/port/src/main.c
 +++ b/port/src/main.c
 @@ -4,6 +4,7 @@
@@ -4030,7 +4517,28 @@ index 52d3fdc46..4306a505a 100644
  
  	// --dedicated (no window, sound or input) and --net-clock-test
  	netInitArgs();
-@@ -371,6 +394,10 @@ int main(int argc, const char **argv)
+@@ -252,6 +275,10 @@ int main(int argc, const char **argv)
+ 	// player's GoldenEye ROM here when they are not there yet, which draws a
+ 	// notice while it works, and they must exist before the mods are mounted.
+ 	videoInit();
++#ifdef PLATFORM_PS5
++	// a setup error from here to romdataInit() draws a page of its own (system.c)
++	{ extern s32 g_SysSetupPageOk; g_SysSetupPageOk = 1; }
++#endif
+ 	gexPlusRomConvert();
+ 	// and GoldenEye XBLA's characters, levels and props out of the player's
+ 	// archive, the first time, with a notice of its own
+@@ -288,6 +315,9 @@ int main(int argc, const char **argv)
+ 		audioInit();
+ 	}
+ 	romdataInit();
++#ifdef PLATFORM_PS5
++	{ extern s32 g_SysSetupPageOk; g_SysSetupPageOk = 0; }
++#endif
+ 	modloaderInit();
+ 
+ 	g_ValidGbcRomFound = romdataCheckGbcRom();
+@@ -371,6 +401,10 @@ int main(int argc, const char **argv)
  		g_FixedStep = fps < 30 ? 30 : fps > 240 ? 240 : fps;
  	}
  	g_ExitFrame = sysArgGetInt("--exit-frame", 0);
@@ -4041,7 +4549,7 @@ index 52d3fdc46..4306a505a 100644
  	g_StateHashEvery = sysArgGetInt("--state-hash", 0);
  	g_ShotFrame = sysArgGetInt("--screenshot-frame", 0);
  	g_AlarmAtFrame = sysArgGetInt("--alarm-at", 0);
-@@ -437,6 +464,12 @@ int main(int argc, const char **argv)
+@@ -437,6 +471,12 @@ int main(int argc, const char **argv)
  		}
  	}
  
@@ -4988,7 +5496,7 @@ index e743746e0..ba503992d 100644
  	{ MENUITEMTYPE_SELECTABLE, 0, MENUITEMFLAG_SELECTABLE_OPENSDIALOG, L_MPMENU_031, 0, (void *)&g_MpCharacterMenuDialog }, // "Character"
  	{ MENUITEMTYPE_SELECTABLE, 0, MENUITEMFLAG_SELECTABLE_OPENSDIALOG, L_MPMENU_033, 0, (void *)&g_MpControlMenuDialog }, // "Control"
 diff --git a/port/src/optionsmenu.c b/port/src/optionsmenu.c
-index 76cceaa09..c9eaff790 100644
+index 76cceaa09..b65301441 100644
 --- a/port/src/optionsmenu.c
 +++ b/port/src/optionsmenu.c
 @@ -445,7 +445,7 @@ struct menuitem g_ExtendedStickMenuItems[] = {
@@ -5082,7 +5590,7 @@ index 76cceaa09..c9eaff790 100644
   */
  static MenuItemHandlerResult menuhandlerGePlusLocked(s32 operation, struct menuitem *item, union handlerdata *data)
  {
-@@ -7928,7 +7933,247 @@ struct menudialogdef g_ExtendedAdvancedMenuDialog = {
+@@ -7928,7 +7933,268 @@ struct menudialogdef g_ExtendedAdvancedMenuDialog = {
  	NULL,
  };
  
@@ -5144,6 +5652,19 @@ index 76cceaa09..c9eaff790 100644
 +		return g_InputPs5Triggers;
 +	case MENUOP_SET:
 +		g_InputPs5Triggers = data->checkbox.value;
++		break;
++	}
++
++	return 0;
++}
++
++static MenuItemHandlerResult menuhandlerPs5PadSpeaker(s32 operation, struct menuitem *item, union handlerdata *data)
++{
++	switch (operation) {
++	case MENUOP_GET:
++		return g_InputPs5PadSpeaker;
++	case MENUOP_SET:
++		g_InputPs5PadSpeaker = data->checkbox.value;
 +		break;
 +	}
 +
@@ -5264,6 +5785,14 @@ index 76cceaa09..c9eaff790 100644
 +		menuhandlerPs5Triggers,
 +	},
 +	{
++		MENUITEMTYPE_CHECKBOX,
++		0,
++		MENUITEMFLAG_LITERAL_TEXT,
++		(uintptr_t)"Controller Speaker",
++		0,
++		menuhandlerPs5PadSpeaker,
++	},
++	{
 +		// the right stick's sensitivity and the rest, which the GoldenEye tile cannot
 +		// reach otherwise (a player's report, 2026-11-02)
 +		MENUITEMTYPE_SELECTABLE,
@@ -5330,6 +5859,290 @@ index 76cceaa09..c9eaff790 100644
  	{
  		MENUITEMTYPE_SELECTABLE,
  		0,
+diff --git a/port/src/padspeaker.c b/port/src/padspeaker.c
+new file mode 100644
+index 000000000..c39adfd93
+--- /dev/null
++++ b/port/src/padspeaker.c
+@@ -0,0 +1,209 @@
++#include "platform.h" // PLATFORM_PS5 is defined here, not on the command line
++#ifdef PLATFORM_PS5
++/**
++ * The DualSense's own speaker: a few short sounds of its own (the watch's
++ * tick, a pickup's chime, a reload's clack, an empty gun's click) played on
++ * the pad of the player they belong to, beside the game's own sounds. They
++ * are made here, not taken from the game. Input.PS5PadSpeaker turns them off.
++ *
++ * Each pad gets a port of the PS5's audio out of the pad speaker kind
++ * (SCE_AUDIO_OUT_PORT_TYPE_PADSPK, its user's own id) the first time it
++ * plays one, and a thread that feeds it what is queued or silence.
++ */
++#include <math.h>
++#include <string.h>
++#include <SDL.h>
++#include <PR/ultratypes.h>
++#include <PR/os_thread.h>
++#include "platform.h"
++#include "config.h"
++#include "input.h"
++#include "system.h"
++#include "net/net.h"
++#include "types.h"
++#include "bss.h"
++#include "data.h"
++#include "game/options.h"
++
++s32 sceAudioOutOpen(s32 userId, s32 type, s32 index, u32 len, u32 freq, u32 param);
++s32 sceAudioOutOutput(s32 handle, const void *p);
++
++#define SPK_PORT_PADSPK 4
++#define SPK_FORMAT_S16_MONO 0
++#define SPK_RATE 48000
++#define SPK_GRAIN 256
++#define SPK_RING 16384 // a third of a second: longer than the longest sound
++#define SPK_AMP 9000.f // of 32767: the pad's speaker is loud close to the hands
++
++s32 g_InputPs5PadSpeaker = 1; // Input.PS5PadSpeaker
++
++static struct spk {
++	s32 port;   // > 0 open, 0 not yet, -1 refused (never asked again)
++	SDL_mutex *lock;
++	s16 ring[SPK_RING];
++	u32 rd, pending;
++} spk[4];
++
++static int spkThread(void *arg)
++{
++	struct spk *s = arg;
++	s16 out[SPK_GRAIN];
++
++	for (;;) {
++		u32 n;
++
++		SDL_LockMutex(s->lock);
++		n = s->pending < SPK_GRAIN ? s->pending : SPK_GRAIN;
++		for (u32 i = 0; i < SPK_GRAIN; i++) {
++			out[i] = i < n ? s->ring[(s->rd + i) % SPK_RING] : 0;
++		}
++		s->rd = (s->rd + n) % SPK_RING;
++		s->pending -= n;
++		SDL_UnlockMutex(s->lock);
++
++		// blocks for a grain's time: this is the thread's clock
++		sceAudioOutOutput(s->port, out);
++	}
++
++	return 0;
++}
++
++static s32 spkOpen(s32 pad)
++{
++	struct spk *s = &spk[pad];
++	const s32 user = inputPs5UserId(pad);
++
++	if (s->port) {
++		return s->port > 0;
++	}
++
++	if (user < 0) {
++		return 0; // not known yet: asked again at the next sound
++	}
++
++	s->port = sceAudioOutOpen(user, SPK_PORT_PADSPK, 0, SPK_GRAIN, SPK_RATE, SPK_FORMAT_S16_MONO);
++	sysLogPrintf(s->port > 0 ? LOG_NOTE : LOG_WARNING, "padspeaker: controller %d (user 0x%x): speaker port %s (0x%08x)",
++			pad + 1, user, s->port > 0 ? "open" : "refused", (u32)s->port);
++
++	if (s->port <= 0) {
++		s->port = -1;
++		return 0;
++	}
++
++	s->lock = SDL_CreateMutex();
++	SDL_CreateThread(spkThread, "padspeaker", s);
++	return 1;
++}
++
++// a sound added to what the pad still has queued (two at once both play):
++// what is past the queue is cleared first (padSpeakerPlay())
++static void spkMix(struct spk *s, u32 at, f32 v)
++{
++	const u32 idx = (s->rd + at) % SPK_RING;
++	s32 x = s->ring[idx] + (s32)(v * SPK_AMP);
++
++	s->ring[idx] = x > 32767 ? 32767 : x < -32768 ? -32768 : x;
++}
++
++// a tone from t0 for len seconds at hz, a fast attack and an exponential fall
++static void spkTone(struct spk *s, f32 t0, f32 len, f32 hz, f32 gain, s32 square)
++{
++	const u32 a = (u32)(t0 * SPK_RATE), n = (u32)(len * SPK_RATE);
++
++	for (u32 i = 0; i < n && a + i < SPK_RING; i++) {
++		const f32 t = (f32)i / SPK_RATE;
++		const f32 env = fminf(1.f, t * 2000.f) * expf(-5.f * t / len);
++		f32 w = sinf(6.2831853f * hz * t);
++
++		if (square) {
++			w = w > 0.f ? 0.6f : -0.6f;
++		}
++
++		spkMix(s, a + i, w * env * gain);
++	}
++}
++
++// a burst of noise, made darker by lp (0..1): the clack of metal. Its own
++// generator, not the game's: the game's random numbers are shared online
++static void spkNoise(struct spk *s, f32 t0, f32 len, f32 lp, f32 gain)
++{
++	static u32 seed = 0x2545f491;
++	const u32 a = (u32)(t0 * SPK_RATE), n = (u32)(len * SPK_RATE);
++	f32 y = 0.f;
++
++	for (u32 i = 0; i < n && a + i < SPK_RING; i++) {
++		const f32 t = (f32)i / SPK_RATE;
++
++		seed = seed * 1664525u + 1013904223u;
++		y += (1.f - lp) * ((f32)(s32)seed / 2147483648.f - y);
++		spkMix(s, a + i, y * expf(-6.f * t / len) * gain);
++	}
++}
++
++static s32 spkPadFor(s32 playernum)
++{
++	if (playernum < 0 || playernum >= MAX_PLAYERS || !g_Vars.players[playernum]) {
++		return -1;
++	}
++
++	// online, the only pad here is the local player's own
++	if (g_NetMode != NETMODE_NONE) {
++		return g_Vars.players[playernum] == netLocalPlayer(NULL) ? 0 : -1;
++	}
++
++	return optionsGetContpadNum1(g_Vars.playerstats[playernum].mpindex);
++}
++
++void padSpeakerPlay(s32 playernum, s32 sound)
++{
++	const s32 pad = g_InputPs5PadSpeaker ? spkPadFor(playernum) : -1;
++	struct spk *s;
++	u32 len = 0;
++
++	if (pad < 0 || pad >= 4 || !spkOpen(pad)) {
++		return;
++	}
++
++	s = &spk[pad];
++	SDL_LockMutex(s->lock);
++
++	for (u32 i = s->pending; i < SPK_RING; i++) {
++		s->ring[(s->rd + i) % SPK_RING] = 0;
++	}
++
++	switch (sound) {
++	case PADSPK_WATCH: // a bright tick
++		spkTone(s, 0.f, 0.03f, 2400.f, 0.7f, 1);
++		len = 0.03f * SPK_RATE;
++		break;
++	case PADSPK_PICKUP: // two notes rising
++		spkTone(s, 0.f, 0.07f, 880.f, 0.8f, 0);
++		spkTone(s, 0.06f, 0.11f, 1320.f, 0.8f, 0);
++		len = 0.17f * SPK_RATE;
++		break;
++	case PADSPK_RELOAD: // clack, clack
++		spkNoise(s, 0.f, 0.03f, 0.4f, 1.f);
++		spkTone(s, 0.f, 0.03f, 520.f, 0.4f, 0);
++		spkNoise(s, 0.09f, 0.05f, 0.6f, 1.f);
++		spkTone(s, 0.09f, 0.05f, 340.f, 0.5f, 0);
++		len = 0.14f * SPK_RATE;
++		break;
++	case PADSPK_EMPTY: // a small dry click
++		spkNoise(s, 0.f, 0.012f, 0.2f, 0.8f);
++		spkTone(s, 0.f, 0.015f, 1100.f, 0.3f, 0);
++		len = 0.015f * SPK_RATE;
++		break;
++	}
++
++	if (len > s->pending) {
++		s->pending = len;
++	}
++
++	SDL_UnlockMutex(s->lock);
++}
++
++PD_CONSTRUCTOR static void padSpeakerConfigInit(void)
++{
++	configRegisterInt("Input.PS5PadSpeaker", &g_InputPs5PadSpeaker, 0, 1);
++}
++#endif
+diff --git a/port/src/pdmain.c b/port/src/pdmain.c
+index 9e53de033..5d9a2c582 100644
+--- a/port/src/pdmain.c
++++ b/port/src/pdmain.c
+@@ -78,6 +78,7 @@
+ #include "data.h"
+ #include "types.h"
+ #include "system.h"
++#include "video.h"
+ #include "mod.h"
+ #include "record.h"
+ #include "texpack.h"
+@@ -353,6 +354,40 @@ void mainOverrideVariable(char *name, void *value)
+  */
+ static void mainNetFrame(void);
+ 
++static Gfx *s_LastFrameGdl; // the last frame's master list, for the fade out
++
++/**
++ * A stage's last picture fades to black over a fifth of a second before the
++ * next one loads (lvRender fades that one in): drawn again from its own list,
++ * still whole since no frame has been built after it, with black over it.
++ * Offline only: online the stage change keeps the room's pace.
++ */
++static void mainFadeOutStage(void)
++{
++	static Gfx veil[16];
++	const u64 start = sysGetMicroseconds();
++	u64 t;
++
++	if (!s_LastFrameGdl || g_NetMode != NETMODE_NONE) {
++		s_LastFrameGdl = NULL;
++		return;
++	}
++
++	for (s32 i = 0; i < 60 && (t = sysGetMicroseconds() - start) < 200000; i++) {
++		Gfx *gdl = veil;
++
++		gSPDisplayList(gdl++, s_LastFrameGdl);
++		gdl = lvRenderScreenVeil(gdl, (u32)(t * 255 / 200000));
++		gSPEndDisplayList(gdl++);
++
++		videoStartFrame();
++		videoSubmitCommands(veil);
++		videoEndFrame();
++	}
++
++	s_LastFrameGdl = NULL;
++}
++
+ void mainLoop(void)
+ {
+ 	s32 ending = false;
+@@ -677,6 +712,7 @@ void mainLoop(void)
+ 			}
+ 		}
+ 
++		mainFadeOutStage();
+ 		lvStop();
+ 		if (g_NetMode != NETMODE_NONE) netStageStopped();
+ 		mempDisablePool(MEMPOOL_STAGE);
+@@ -816,6 +852,7 @@ void mainTick(void)
+ 		}
+ 
+ 		if (g_NetPass != NETPASS_TICK) rdpCreateTask(gdlstart, gdl, 0, (uintptr_t) &msg);
++		if (gdlstart) s_LastFrameGdl = gdlstart;
+ 		memaPrint();
+ 		profileSetMarker(PROFILE_MAINTICK_END);
+ 	}
 diff --git a/port/src/record.c b/port/src/record.c
 index b5b178af9..19caf8616 100644
 --- a/port/src/record.c
@@ -5349,10 +6162,94 @@ index b5b178af9..19caf8616 100644
  	// Mod Options is where that is asked for, and until it has been the key
  	// does nothing rather than failing loudly once a frame.
 diff --git a/port/src/system.c b/port/src/system.c
-index fffbe04b9..43ce89a7d 100644
+index fffbe04b9..2e483379b 100644
 --- a/port/src/system.c
 +++ b/port/src/system.c
-@@ -335,6 +335,18 @@ static void sysFatalV(s32 report, const char *fmt, va_list ap)
+@@ -310,6 +310,83 @@ static void sysFatalDialog(const char *shown, const char *full)
+ 
+ static void sysFatalV(s32 report, const char *fmt, va_list ap) __attribute__((noreturn));
+ 
++#ifdef PLATFORM_PS5
++#include "gexplusrom.h"
++
++// set by main() from videoInit() to romdataInit(): the stretch where a setup
++// error can draw a page of its own (the window is up, the game's loop is not)
++s32 g_SysSetupPageOk = 0;
++
++/**
++ * A setup error on the PS5 as a page on the screen, until a button is pressed
++ * or two minutes pass: the player's own fix (a ROM missing or the wrong one)
++ * spelt out, where before the game closed with only a toast. The pads are
++ * opened here, since this can come before inputInit().
++ */
++static void sysPs5SetupErrorPage(const char *msg)
++{
++	const s32 ge = sysArgCheck("--ps5-goldeneye");
++	const char *folder = ge ? "PPSA64008" : "PPSA64007";
++	SDL_GameController *pads[8] = { NULL };
++	char title[64], body[512], reason[128] = "";
++	const u32 start = SDL_GetTicks();
++	s32 armed = 0;
++
++	if (!strncmp(msg, "Could not open ROM file", 23)) {
++		snprintf(title, sizeof(title), "NO PERFECT DARK ROM FOUND");
++		snprintf(body, sizeof(body), "PUT YOUR PERFECT DARK (USA) REV 1 ROM IN THIS GAME'S FOLDER (%s) IN "
++				"/DATA/HOMEBREW, THEN START THE GAME AGAIN.\nANY FILE NAME ENDING IN .Z64, .N64 OR .V64 WORKS.", folder);
++	} else if (!strncmp(msg, "Wrong ROM file.\n", 16)) {
++		// the second line is the reason romdataWrongRomError() gave
++		const char *nl = strchr(msg + 16, '\n');
++		snprintf(reason, sizeof(reason), "%.*s", nl ? (s32)(nl - (msg + 16)) : (s32)strlen(msg + 16), msg + 16);
++		snprintf(title, sizeof(title), "THIS ISN'T THE RIGHT ROM");
++		snprintf(body, sizeof(body), "%s\nTHE GAME NEEDS PERFECT DARK (USA) REV 1. PUT IT IN THIS GAME'S FOLDER (%s) "
++				"AND DELETE DATA/PD.NTSC-FINAL.Z64 THERE, THEN START THE GAME AGAIN.", reason, folder);
++	} else if (!strncmp(msg, "No GoldenEye ROM", 16)) {
++		snprintf(title, sizeof(title), "NO GOLDENEYE ROM FOUND");
++		snprintf(body, sizeof(body), "PUT YOUR GOLDENEYE 007 (USA) ROM IN THIS GAME'S FOLDER (%s) IN "
++				"/DATA/HOMEBREW, BESIDE THE PERFECT DARK ROM, THEN START THE GAME AGAIN.", folder);
++	} else {
++		snprintf(title, sizeof(title), "%s COULD NOT START", ge ? "GOLDENEYE" : "PERFECT DARK");
++		snprintf(body, sizeof(body), "%s", msg);
++	}
++
++	if (!SDL_WasInit(SDL_INIT_GAMECONTROLLER)) {
++		SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER);
++	}
++
++	// held at the start (the button that started the game) does not count:
++	// every button let go first, for half a second
++	while (SDL_GetTicks() - start < 120000) {
++		s32 held = 0;
++
++		gexPlusRomNoticePage(title, body, "PRESS ANY BUTTON TO CLOSE");
++
++		SDL_PumpEvents();
++		SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
++
++		for (s32 i = 0; i < SDL_NumJoysticks() && i < (s32)(sizeof(pads) / sizeof(pads[0])); i++) {
++			if (!pads[i] && SDL_IsGameController(i)) {
++				pads[i] = SDL_GameControllerOpen(i);
++			}
++
++			for (s32 b = 0; pads[i] && b < SDL_CONTROLLER_BUTTON_MAX; b++) {
++				held |= SDL_GameControllerGetButton(pads[i], (SDL_GameControllerButton)b);
++			}
++		}
++
++		if (!held && SDL_GetTicks() - start > 500) {
++			armed = 1;
++		} else if (held && armed) {
++			break;
++		}
++
++		SDL_Delay(16);
++	}
++}
++#endif
++
+ static void sysFatalV(s32 report, const char *fmt, va_list ap)
+ {
+ 	static s32 alreadyCrashed = 0;
+@@ -335,6 +412,23 @@ static void sysFatalV(s32 report, const char *fmt, va_list ap)
  	fflush(stdout);
  	fflush(stderr);
  
@@ -5364,6 +6261,11 @@ index fffbe04b9..43ce89a7d 100644
 +		extern void ps5LastWords(const char *fmt, ...);
 +		ps5LastWords("fatal: %s", shown);
 +		ps5Notify("Perfect Dark stopped: %s", shown);
++
++		if (!report && g_SysSetupPageOk) {
++			sysPs5SetupErrorPage(shown);
++		}
++
 +		_exit(1);
 +	}
 +#endif
@@ -5371,7 +6273,7 @@ index fffbe04b9..43ce89a7d 100644
  	// The dialog is a desktop window, and a desktop left at the game's
  	// exclusive resolution is a poor place to read one.
  	videoRestoreDesktop();
-@@ -381,6 +393,12 @@ s32 sysRestartRequested(void)
+@@ -381,6 +475,12 @@ s32 sysRestartRequested(void)
  
  void sysGetExecutablePath(char *outPath, const u32 outLen)
  {
@@ -5384,7 +6286,7 @@ index fffbe04b9..43ce89a7d 100644
  	// try asking SDL
  	char *sdlPath = SDL_GetBasePath();
  
-@@ -415,6 +433,10 @@ void sysGetExecutablePath(char *outPath, const u32 outLen)
+@@ -415,6 +515,10 @@ void sysGetExecutablePath(char *outPath, const u32 outLen)
  
  void sysGetHomePath(char *outPath, const u32 outLen)
  {
@@ -5395,7 +6297,7 @@ index fffbe04b9..43ce89a7d 100644
  	// try asking SDL
  	char *sdlPath = SDL_GetPrefPath("", "perfectdark");
  
-@@ -489,6 +511,14 @@ s32 sysMemReadableRange(const void *ptr, uintptr_t *lo, uintptr_t *hi)
+@@ -489,6 +593,14 @@ s32 sysMemReadableRange(const void *ptr, uintptr_t *lo, uintptr_t *hi)
  	*lo = (uintptr_t)mbi.BaseAddress;
  	*hi = (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
  
@@ -5788,7 +6690,7 @@ index b32b6b917..13253a84d 100644
  			// The startup check is still asking. It has nothing to write and
  			// nothing to leave behind, and a request stuck connecting to a
 diff --git a/port/src/updatemenu.c b/port/src/updatemenu.c
-index 06123262a..61fc5fbe2 100644
+index 06123262a..fa73cc60d 100644
 --- a/port/src/updatemenu.c
 +++ b/port/src/updatemenu.c
 @@ -40,6 +40,10 @@ static char g_SwitchBackup[160];
@@ -5886,7 +6788,20 @@ index 06123262a..61fc5fbe2 100644
  	return 0;
  }
  
-@@ -921,25 +971,44 @@ void updatenoticeMainMenuTick(struct menudialogdef *menudef, struct menuinputs *
+@@ -819,8 +869,12 @@ void updatenoticeStart(void)
+ 		return;
+ 	}
+ 
++	// Only "this is the latest" is reused. An offer is asked again: one cached
++	// by this build's first start, before its own release was out, offered
++	// the release before it as an update for six hours (1.3.6 offering 1.3.5)
+ 	if (g_NoticeLastCheck > 0 && now >= g_NoticeLastCheck
+ 			&& now - g_NoticeLastCheck < UPDATENOTICE_INTERVAL
++			&& g_NoticeLastCommit[0] == '\0'
+ 			&& strcmp(g_NoticeLastBuild, VERSION_HASH "-" VERSION_CHANNEL) == 0) {
+ 		sysLogPrintf(LOG_NOTE, "updatenotice: using the answer from %d min ago", (now - g_NoticeLastCheck) / 60);
+ 		updatenoticeFound(g_NoticeLastVersion, g_NoticeLastCommit);
+@@ -921,25 +975,44 @@ void updatenoticeMainMenuTick(struct menudialogdef *menudef, struct menuinputs *
  
  	g_NoticeIdle += g_Vars.diffframe60;
  
@@ -5938,7 +6853,7 @@ index 06123262a..61fc5fbe2 100644
  
  	return g_NoticeText;
  }
-@@ -951,6 +1020,9 @@ static MenuItemHandlerResult menuhandlerUpdateNoticeNow(s32 operation, struct me
+@@ -951,6 +1024,9 @@ static MenuItemHandlerResult menuhandlerUpdateNoticeNow(s32 operation, struct me
  
  		menuPopDialog();
  		menuPushDialog(&g_UpdateMenuDialog);
@@ -6231,6 +7146,67 @@ index a62b148e4..ccfebe042 100644
  
  	if (out->tried < 0 || !out->rgba) {
  		return NULL;
+diff --git a/src/game/bondgun.c b/src/game/bondgun.c
+index 58e2eddec..05c2b23b7 100644
+--- a/src/game/bondgun.c
++++ b/src/game/bondgun.c
+@@ -21,6 +21,9 @@
+ #include "game/quaternion.h"
+ #include "game/game_097aa0.h"
+ #include "game/bondgun.h"
++#ifdef PLATFORM_PS5
++#include "input.h"
++#endif
+ #include "game/gunfx.h"
+ #include "game/game_0b0fd0.h"
+ #include "game/modeldef.h"
+@@ -82,6 +85,9 @@
+ #include "geslappers.h"
+ #include "modloader.h"
+ #endif
++#ifdef PLATFORM_PS5
++#include "input.h"
++#endif
+ 
+ #define GUNLOADSTATE_FLUX     0
+ #define GUNLOADSTATE_MODEL    1
+@@ -238,6 +244,13 @@ void bgunRumble(s32 handnum, s32 weaponnum)
+ 	s32 contpad1hasrumble;
+ 	s32 contpad2hasrumble;
+ 
++#ifdef PLATFORM_PS5
++	// the DualSense's own rumble for each kind of gun (input.c)
++	if (inputPs5ShotRumble(handnum)) {
++		return;
++	}
++#endif
++
+ 	joyGetContpadNumsForPlayer(g_Vars.currentplayernum, &contpad1, &contpad2);
+ 
+ 	if (optionsGetControlMode(g_Vars.currentplayerstats->mpindex) >= CONTROLMODE_21
+@@ -3302,6 +3315,9 @@ s32 bgunTickIncAttackEmpty(struct handweaponinfo *info, s32 handnum, struct hand
+ 			break;
+ 		default:
+ 			// Default click sound effect
++#ifdef PLATFORM_PS5
++			padSpeakerPlay(g_Vars.currentplayernum, PADSPK_EMPTY);
++#endif
+ #ifndef PLATFORM_N64
+ 			sndStart(var80095200, geSfxGunSound(info->weaponnum, SFX_FIREEMPTY), NULL, -1, -1, -1, -1, -1);
+ #else
+@@ -4132,6 +4148,12 @@ bool bgunSetState(s32 handnum, s32 state)
+ 	}
+ 
+ 	if (valid) {
++#ifdef PLATFORM_PS5
++		// a reload's clack on the DualSense's speaker, once as it starts
++		if (state == HANDSTATE_RELOAD && hand->state != HANDSTATE_RELOAD) {
++			padSpeakerPlay(g_Vars.currentplayernum, PADSPK_RELOAD);
++		}
++#endif
+ 		hand->state = state;
+ 		hand->stateframes = 0;
+ 		hand->stateflags = 0;
 diff --git a/src/game/bondmove.c b/src/game/bondmove.c
 index 41fc439cd..e528c23f9 100644
 --- a/src/game/bondmove.c
@@ -6345,6 +7321,31 @@ index d4918a34a..b85e79842 100644
  	return g_DebugTurboMode;
  }
  
+diff --git a/src/game/explosions.c b/src/game/explosions.c
+index 45bf1b6d8..8f3e2f311 100644
+--- a/src/game/explosions.c
++++ b/src/game/explosions.c
+@@ -37,6 +37,9 @@
+ #include "gehitpuff.h"
+ #include "net/net.h"
+ #include "killfeed.h"
++#ifdef PLATFORM_PS5
++#include "input.h"
++#endif
+ 
+ #define GE_EXPLOSION_HARMLESS_TICKS 8
+ #endif
+@@ -713,6 +716,10 @@ void explosionsUpdateShake(struct coord *arg0, struct coord *arg1, struct coord
+ 	arg2->z = intensity * sp50;
+ 
+ 	viShake(g_ExplosionShakeTotalTimer * intensity);
++
++#ifdef PLATFORM_PS5
++	inputPs5ShakeRumble(g_ExplosionShakeTotalTimer * intensity);
++#endif
+ }
+ 
+ /**
 diff --git a/src/game/filemgr.c b/src/game/filemgr.c
 index aef9f054e..5262fcec7 100644
 --- a/src/game/filemgr.c
@@ -6429,10 +7430,30 @@ index aef9f054e..5262fcec7 100644
  	}
  
 diff --git a/src/game/lv.c b/src/game/lv.c
-index 029ce2a16..13aa3d766 100644
+index 029ce2a16..dbd6d52b6 100644
 --- a/src/game/lv.c
 +++ b/src/game/lv.c
-@@ -1262,6 +1262,7 @@ bool lvHoldsLevelStart(void)
+@@ -182,6 +182,9 @@ u32 g_MiscSfxSounds[] = {
+ s32 var80084050 = 0;
+ 
+ s16 g_FadeNumFrames = 0;
++#ifndef PLATFORM_N64
++f32 g_LvStageFadeIn = 0.f;
++#endif
+ f32 g_FadeFrac = -1;
+ u32 g_FadePrevColour = 0;
+ u32 g_FadeColour = 0;
+@@ -751,6 +754,9 @@ void lvFadeReset(void)
+ 	g_FadePrevColour = 0;
+ 	g_FadeColour = 0;
+ 	g_FadeDelay = 0;
++#ifndef PLATFORM_N64
++	g_LvStageFadeIn = 1.f; // only lvReset() calls this: a stage starting
++#endif
+ }
+ 
+ bool lvUpdateTrackedProp(struct trackedprop *trackedprop, s32 index)
+@@ -1262,6 +1268,7 @@ bool lvHoldsLevelStart(void)
  
  Gfx *lvRender(Gfx *gdl)
  {
@@ -6440,7 +7461,7 @@ index 029ce2a16..13aa3d766 100644
  	gSPSegment(gdl++, SPSEGMENT_PHYSICAL, 0x00000000);
  
  #if VERSION >= VERSION_NTSC_1_0
-@@ -2191,6 +2192,20 @@ Gfx *lvRender(Gfx *gdl)
+@@ -2191,9 +2198,48 @@ Gfx *lvRender(Gfx *gdl)
  	}
  #endif
  
@@ -6456,12 +7477,40 @@ index 029ce2a16..13aa3d766 100644
 +		gDPPipeSync(gdl++);
 +		gDPSetCycleType(gdl++, G_CYC_1CYCLE);
 +	}
++
++	// each stage fades in from the black of its load, over 24 60ths (a long
++	// first frame after the load counts as four at most)
++	if (g_LvStageFadeIn > 0.f) {
++		gdl = lvRenderScreenVeil(gdl, g_LvStageFadeIn * g_LvStageFadeIn * 255.f);
++		g_LvStageFadeIn -= fminf(g_Vars.diffframe60freal, 4.f) / 24.f;
++	}
 +#endif
 +
  	return gdl;
  }
  
-@@ -2494,6 +2509,8 @@ s32 lvGetSlowMotionType(void)
++#ifndef PLATFORM_N64
++// black over the whole screen at alpha (0-255): the fade into each stage
++// (lvRender) and out of the last one (pdmain.c)
++Gfx *lvRenderScreenVeil(Gfx *gdl, u32 alpha)
++{
++	gDPPipeSync(gdl++);
++	gDPSetCycleType(gdl++, G_CYC_1CYCLE);
++	gDPSetScissor(gdl++, G_SC_NON_INTERLACE, 0, 0, viGetWidth(), viGetHeight());
++	gDPSetRenderMode(gdl++, G_RM_CLD_SURF, G_RM_CLD_SURF2);
++	gDPSetCombineMode(gdl++, G_CC_PRIMITIVE, G_CC_PRIMITIVE);
++	gDPSetPrimColor(gdl++, 0, 0, 0, 0, 0, alpha > 255 ? 255 : alpha);
++	gDPFillRectangle(gdl++, 0, 0, viGetWidth(), viGetHeight());
++	gDPPipeSync(gdl++);
++
++	return gdl;
++}
++#endif
++
+ const char var7f1b7730[] = "fr: %d\n";
+ 
+ u32 g_CutsceneTime240_60 = 0;
+@@ -2494,6 +2540,8 @@ s32 lvGetSlowMotionType(void)
  
  void lvTick(void)
  {
@@ -7122,6 +8171,39 @@ index a3fe764ae..0d741ab43 100644
  	if (cheatIsActive(CHEAT_ROCKETLAUNCHER)) {
  		invGiveSingleWeapon(WEAPON_ROCKETLAUNCHER);
  		bgunSetAmmoQuantity(AMMOTYPE_ROCKET, 10);
+diff --git a/src/game/propobj.c b/src/game/propobj.c
+index e4ec4a2d6..0bd350d8d 100644
+--- a/src/game/propobj.c
++++ b/src/game/propobj.c
+@@ -123,6 +123,9 @@
+ #include "gecinema.h"
+ #include "net/net.h"
+ #include "killfeed.h"
++#ifdef PLATFORM_PS5
++#include "input.h"
++#endif
+ #endif
+ #endif
+ 
+@@ -20334,7 +20337,18 @@ s32 objTestForPickup(struct prop *prop)
+ 		}
+ 
+ 		if (pickup) {
++#ifdef PLATFORM_PS5
++			// a chime on the DualSense's speaker for what was picked up
++			const s32 op = propPickupByPlayer(prop, true);
++
++			if (op != TICKOP_NONE) {
++				padSpeakerPlay(g_Vars.currentplayernum, PADSPK_PICKUP);
++			}
++
++			return op;
++#else
+ 			return propPickupByPlayer(prop, true);
++#endif
+ 		}
+ 	}
+ 
 diff --git a/src/game/radar.c b/src/game/radar.c
 index 0b83651b5..3aabab44b 100644
 --- a/src/game/radar.c
@@ -7209,6 +8291,20 @@ index 23f7418df..58ff2b1b2 100644
  	if (chr && chr->prop && chr->prop->type == PROPTYPE_PLAYER) {
  		setCurrentPlayerNum(playermgrGetPlayerNumByProp(chr->prop));
  	} else {
+diff --git a/src/include/game/lv.h b/src/include/game/lv.h
+index 4617c6326..7bbb17eb8 100644
+--- a/src/include/game/lv.h
++++ b/src/include/game/lv.h
+@@ -30,6 +30,9 @@ void lvFindThreats(void);
+ Gfx *lvRender(Gfx *gdl);
+ #ifndef PLATFORM_N64
+ bool lvHoldsLevelStart(void);
++// black over the whole screen at alpha (0-255), and the stage's fade in (1 to 0)
++Gfx *lvRenderScreenVeil(Gfx *gdl, u32 alpha);
++extern f32 g_LvStageFadeIn;
+ #endif
+ void lvUpdateSoloHandicaps(void);
+ s32 sub54321(s32 value);
 diff --git a/src/include/platform.h b/src/include/platform.h
 index 79a1864e8..ffa387037 100644
 --- a/src/include/platform.h

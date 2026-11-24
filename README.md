@@ -143,6 +143,9 @@ under **Options → Extended Options → Texture Packs**.
 - **Adaptive triggers:** R2 feels like the gun in hand (a clean break for pistols, a heavy pull
   for shotguns and launchers, a buzz while an automatic fires); L2 has a light stop for aiming.
   `Input.PS5AdaptiveTriggers=0` turns them off.
+- **Rumble for each kind of gun**, matched to its trigger, and for explosions nearby.
+- **The controller's speaker** plays the watch's tick, pickups, reloads and an empty gun's click.
+  `Input.PS5PadSpeaker=0` (or Controller Speaker on the PS5 Settings page) turns it off.
 - **Light bars** in each player's colour, or the team's colour in a team match.
 - **PlayStation button names** (CROSS, CIRCLE, L1, R2, OPTIONS) in the controls menus.
 - **5.1 surround** with Sound Mode set to Surround; **Headphone Surround**
